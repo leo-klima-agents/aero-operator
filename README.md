@@ -13,8 +13,8 @@ There are two contracts, both without an owner, settings or an upgrade path:
   addresses.
 
 They are not deployed yet. On every chain where Aero's LeafVoter is at `0x382409fad8503FbCdbB27A4211551fa03e884078`
-and the fee Safe exists, the factory will be at `0x31B6Ac3045417B043010868719b06dE0f5351316` and the
-`ImmutableClaimOperator` that the clones run at `0x753F6e8BFf6f7e22A729e3817046d24b833c38aA`. A recipient's clone has
+and the fee Safe exists, the factory will be at `0x1f9Dc466C887b959Be8e6dbE4dEE830a0ddc4b34` and the
+`ImmutableClaimOperator` that the clones run at `0x96D40eF01988f0f8260F0f8e369954995c127b07`. A recipient's clone has
 the same address on all of them.
 
 ## How it works
@@ -40,8 +40,9 @@ and the clone's code, which holds the recipient, so it is known before the clone
 Nobody deploys clones in advance. The owner sets the address as the operator, and the factory deploys the clone with
 the first claim.
 
-Only a clone can claim. The `ImmutableClaimOperator` that the clones run has no recipient of its own: its `recipient`
-and `claim` revert with `NotClone`, so setting it as an operator by mistake pays nobody.
+Only a clone can claim. `recipient` and `claim` revert with `NotClone` unless they run in code of exactly a clone's 65
+bytes. So the `ImmutableClaimOperator` itself, or another proxy to it without a recipient, pays nobody if it is set as
+an operator by mistake.
 
 ### Claiming
 
@@ -63,18 +64,18 @@ If any step of an entry fails, the whole entry is undone: its rewards stay in th
 `ClaimFailed(tokenId, votingRewardsManager, programId, reason)` and carries on with the next entry. `programId` is 0
 for fees, and `reason` is the first 256 bytes of what the entry reverted with, such as
 `NotRegistered(votingRewardsManager)`, `TransferFailed(token)` or the LeafVoter's `NotAuthorized()` when the clone is
-not the stake's operator. It is empty when the entry ran out of gas. So a token that can't be sent to the recipient or
-the fee Safe doesn't block the others, and the clone holds nothing once `claim` returns.
+not the stake's operator. It is empty when the entry ran out of gas, and when it reverted without a reason. So a
+token that can't be sent to the recipient or the fee Safe doesn't block the others, and the clone holds nothing once
+`claim` returns.
 
-`entryGas` is the gas each entry may use. Before an entry, `claim` reverts with `InsufficientGas` unless it has
-`entryGas × 64 / 63` left, the least from which it can pass `entryGas` on. So an entry never fails because the
-transaction was sent with too little gas: either every entry was offered `entryGas`, or nothing happened. An entry
-that uses up its gas, whatever the reason, fails alone like any other.
+`entryGas` is the gas each entry may use, the clone's own call included. Before an entry, `claim` reverts with
+`InsufficientGas` unless it can pass `entryGas` on: a call can pass on 63/64 of the gas left, and `claim` first sets
+20,000 aside to handle the entry's failure. So an entry never fails because the transaction was sent with too little
+gas: either every entry was given `entryGas`, or nothing happened. An entry that uses up its gas, whatever the reason,
+fails alone like any other.
 
 For every token it forwards, the clone emits `Claimed(tokenId, token, amount, fee)`. `token` is the manager's token,
 so a payment in native tokens shows the wrapped native token's address.
-
-Program 0 means the fees everywhere: an incentive claim for program 0 claims the manager's fees.
 
 A clone accepts native tokens only during a claim, so they can't be sent to it by mistake.
 
@@ -114,13 +115,21 @@ zero address.
 ## For claimers
 
 `allocatedGauges(tokenId)` on a chain's LeafVoter lists the gauges a stake is allocated to, and `gaugeToRewards(gauge)`
-on its `FACTORY_REGISTRY` gives each gauge's rewards manager. On a manager, `earnedFees(tokenId, maxCheckpoints)` and
+on its `FACTORY_REGISTRY` gives each gauge's rewards manager. A gauge the stake has left is no longer listed but can
+still owe it rewards: on the manager of every gauge the stake has been allocated to,
+`userRewardCheckpointIndex(tokenId)` is not 0. On a manager, `earnedFees(tokenId, maxCheckpoints)` and
 `earnedIncentives(tokenId, programId, maxCheckpoints)` estimate what a claim would pay. `maxCheckpoints` must not be 0.
 
-Choose `entryGas` well above what an entry uses: an entry that needs more fails, with an empty `reason`, and can be
-claimed again with more. The first claim of a stake's rewards from a manager is the heaviest. In the fork tests, such
-entries used about 310,000 gas each on average on Base, and the tests pass with 3,000,000 on every chain. The transaction needs
-the gas the claim uses plus `entryGas × 64 / 63`, and no less, or it reverts.
+Choose `entryGas` well above what an entry uses. The first claim of a stake's rewards from a manager is the heaviest:
+in the fork tests, such entries used about 310,000 gas each on average on Base, and the tests pass with 3,000,000 on
+every chain. An entry that needs more than `entryGas` fails with an empty `reason` and can be claimed again with more.
+An empty `reason` can also be a revert without one, which more gas doesn't cure: simulate the entry with more before
+sending it again.
+
+The gas limit has to cover `entryGas` once more than the claim uses: before its last entry, the clone needs
+`(entryGas + 20,000) × 64 / 63` left, and through the factory 64/63 of that. With less, the whole claim reverts with
+`InsufficientGas` and pays nothing, so add a margin: entries can use more by the time the claim is included than they
+did in a simulation.
 
 Each entry costs about 60,000 gas more than in a claim sent through Aero's Voter, and the fork tests fail above
 90,000. There, 10 entries cost 3.99M gas against 3.28M on Ethereum, and 56 entries 17.4M against 14.2M on Base. Base
@@ -132,6 +141,9 @@ and Ethereum accept at most 16,777,216 gas per transaction, so split a long list
   address, and setting the operators again.
 - The clones are only as safe as Aero's contracts. The LeafVoter has no proxy, but Aero's governance holds roles on it,
   and a clone claims from whatever rewards managers Aero's `FACTORY_REGISTRY` lists.
+- Whoever calls `claim` chooses the gas each entry gets. On Base, nothing between a rewards manager's fee claim and
+  the pool catches a failure, in either kind of gauge or any of the three kinds of pool, so an entry given too little
+  fails whole. A gauge or pool that did catch one could be made to skip that step.
 - Whoever the escrow authorizes for a stake, its owner or an address the owner approved, can set its operators.
 - A clone can't tell a sale on any chain but Base: see [Sales](#sales).
 - A recipient that can't receive a token, such as USDC at a blocklisted address or native tokens at a contract that
@@ -170,8 +182,8 @@ yet.
 
 | | |
 |---|---|
-| Factory | `0x31B6Ac3045417B043010868719b06dE0f5351316` |
-| `ImmutableClaimOperator` | `0x753F6e8BFf6f7e22A729e3817046d24b833c38aA`, created by the factory's constructor |
+| Factory | `0x1f9Dc466C887b959Be8e6dbE4dEE830a0ddc4b34` |
+| `ImmutableClaimOperator` | `0x96D40eF01988f0f8260F0f8e369954995c127b07`, created by the factory's constructor |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
 | Base's chain id | 8453 |
@@ -198,9 +210,9 @@ Deployment steps, for each chain:
 ```
 forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --ledger
 ARGS=$(jq -j .deployment.constructorArgs verification/bytecode-hashes.json)
-forge verify-contract 0x31B6Ac3045417B043010868719b06dE0f5351316 src/ImmutableClaimOperatorFactory.sol:ImmutableClaimOperatorFactory \
+forge verify-contract 0x1f9Dc466C887b959Be8e6dbE4dEE830a0ddc4b34 src/ImmutableClaimOperatorFactory.sol:ImmutableClaimOperatorFactory \
   --rpc-url $RPC_URL --constructor-args $ARGS --license-type MIT --watch
-forge verify-contract 0x753F6e8BFf6f7e22A729e3817046d24b833c38aA src/ImmutableClaimOperator.sol:ImmutableClaimOperator \
+forge verify-contract 0x96D40eF01988f0f8260F0f8e369954995c127b07 src/ImmutableClaimOperator.sol:ImmutableClaimOperator \
   --rpc-url $RPC_URL --constructor-args $ARGS --license-type MIT --watch
 ```
 
@@ -210,9 +222,9 @@ To check that the deployed contracts are this repository's code, compare their c
 `verification/bytecode-hashes.json`, which `script/check-verification.sh` checks against a build of this repository:
 
 ```
-cast keccak $(cast code 0x31B6Ac3045417B043010868719b06dE0f5351316 --rpc-url $RPC_URL)
+cast keccak $(cast code 0x1f9Dc466C887b959Be8e6dbE4dEE830a0ddc4b34 --rpc-url $RPC_URL)
 jq -j .deployment.factoryRuntimeKeccak verification/bytecode-hashes.json
-cast keccak $(cast code 0x753F6e8BFf6f7e22A729e3817046d24b833c38aA --rpc-url $RPC_URL)
+cast keccak $(cast code 0x96D40eF01988f0f8260F0f8e369954995c127b07 --rpc-url $RPC_URL)
 jq -j .deployment.implementationRuntimeKeccak verification/bytecode-hashes.json
 ```
 
@@ -237,12 +249,13 @@ You need [Foundry](https://getfoundry.sh). The fork tests also need archive RPCs
   blocks and the stakes named in [`test/Fork.t.sol`](test/Fork.t.sol). On each chain they deploy the factory with the
   deploy script, set a clone as a real stake's operator, and compare what a claim through it pays, and what its events
   say, with the same claim sent by Aero's own route. Where the fee Safe is not deployed yet, a copy of its proxy
-  stands in for it; on Elysium, a contract that only accepts payments.
+  stands in for it; where the Safe's singleton is missing too, as on Elysium, a contract that only accepts payments.
 - Some tokens run in the node itself, which Foundry's fork can't do: Base's native tokens, whose code is `0xef`, and
   Arc's USDC. The Base fork tests leave out the rewards managers that pay them, and Arc has no fork tests.
 - `script/simulate.sh <rpc-url> <token-id> [max-gauges] [entry-gas]` covers those tokens. In `eth_call`s on a live node, with
   state overrides and nothing sent, it deploys the factory, makes the recipient's clone the stake's operator, claims
-  everything the stake is owed and checks it against Aero's own route. It needs a node that accepts state overrides.
+  everything the stake is owed by the gauges it is allocated to and checks it against Aero's own route. It needs a
+  node that accepts state overrides. Off Base, `RECIPIENT` chooses the recipient.
 - `script/check-verification.sh` checks that `verification/` and this file's addresses match the build.
 - `script/refresh-verification.sh` regenerates `verification/` after a change to the source or the deploy script.
 

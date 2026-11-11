@@ -11,6 +11,7 @@ contract Hashes is Deploy {
         if (predict().code.length == 0) {
             if (LEAF_VOTER.code.length == 0) vm.etch(LEAF_VOTER, hex"00");
             if (FEE_RECIPIENT.code.length == 0) vm.etch(FEE_RECIPIENT, hex"00");
+            if (block.chainid == BASE_CHAIN_ID && ESCROW.code.length == 0) vm.etch(ESCROW, hex"00");
             (bool ok,) = CREATE2_FACTORY.call(bytes.concat(SALT, initCode()));
             require(ok && predict().code.length != 0, "CREATE2 deploy failed");
         }

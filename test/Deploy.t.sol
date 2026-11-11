@@ -90,19 +90,19 @@ contract DeployTest is Test {
 
     function test_run_failsWithoutTheLeafVoter() public {
         vm.etch(d.LEAF_VOTER(), "");
-        vm.expectRevert(bytes("LeafVoter not present"));
+        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.NoCode.selector, d.LEAF_VOTER()));
         d.run();
     }
 
     function test_run_failsWithoutTheFeeRecipient() public {
         vm.etch(d.FEE_RECIPIENT(), "");
-        vm.expectRevert(bytes("fee recipient not present"));
+        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.NoCode.selector, d.FEE_RECIPIENT()));
         d.run();
     }
 
     function test_run_onBase_failsWithoutTheEscrow() public {
         vm.chainId(8453);
-        vm.expectRevert(bytes("escrow not present"));
+        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.NoCode.selector, d.ESCROW()));
         d.run();
 
         vm.etch(d.ESCROW(), hex"00");

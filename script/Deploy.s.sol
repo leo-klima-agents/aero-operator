@@ -34,9 +34,8 @@ contract Deploy is Script {
 
     function run() external returns (address deployed) {
         require(CREATE2_FACTORY.code.length != 0, "CREATE2 deployer not present");
-        require(LEAF_VOTER.code.length != 0, "LeafVoter not present");
-        require(FEE_RECIPIENT.code.length != 0, "fee recipient not present");
-        require(block.chainid != BASE_CHAIN_ID || ESCROW.code.length != 0, "escrow not present");
+        // Reverts with the constructor's own error where the chain lacks what the contracts need.
+        new ImmutableClaimOperator(LEAF_VOTER, ESCROW, BASE_CHAIN_ID, FEE_RECIPIENT);
         deployed = predict();
         console.log("ImmutableClaimOperatorFactory", deployed);
         console.log("ImmutableClaimOperator", predictImplementation());

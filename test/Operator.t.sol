@@ -564,11 +564,63 @@ contract OperatorTest is Test {
     function test_claimEntry_onlyFromTheCloneItself() public {
         factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
         _owe(pair, 1e18, 2e6);
+        ImmutableClaimOperator.Entry memory entry =
+            ImmutableClaimOperator.Entry(ID, address(this), address(registry), address(pair), true, 0, 500);
 
         vm.expectRevert(ImmutableClaimOperator.NotSelf.selector);
-        operator.claimEntry(ID, address(pair), 0, 500);
-        vm.expectRevert(ImmutableClaimOperator.NotSelf.selector);
-        operator.claimEntry(ID, address(pair), 1, 500);
+        operator.claimEntry(entry);
+    }
+
+    function test_aProxyWithoutARecipient_isNotAClone() public {
+        address proxy = makeAddr("proxy");
+        vm.etch(
+            proxy,
+            abi.encodePacked(hex"363d3d373d3d3d363d73", factory.implementation(), hex"5af43d82803e903d91602b57fd5bf3")
+        );
+        voter.setOperator(ID, proxy);
+        _owe(pair, 1e18, 2e6);
+
+        vm.expectRevert(ImmutableClaimOperator.NotClone.selector);
+        ImmutableClaimOperator(payable(proxy)).recipient();
+        vm.expectRevert(ImmutableClaimOperator.NotClone.selector);
+        ImmutableClaimOperator(payable(proxy)).claim(ID, _fees(pair), _none(), ENTRY_GAS);
+        assertEq(aero.balanceOf(address(pair)), 1e18);
+    }
+
+    function test_claim_withMoreEntryGasThanAnyTransactionHas_reverts() public {
+        _owe(pair, 1e18, 2e6);
+
+        vm.expectRevert(ImmutableClaimOperator.InsufficientGas.selector);
+        factory.claim(recipient, ID, _fees(pair), _none(), type(uint256).max);
+    }
+
+    function test_claim_withAnEntryThatBurnsItsGas_succeedsOnlyWithTheOthersPaid() public {
+        MockToken bad = new MockToken();
+        MockRewardsManager broken = _manager(address(bad), address(aero));
+        _owe(broken, 5e18, 7e18);
+        _owe(pair, 1e18, 2e6);
+        _owe(native, 1 ether, 0);
+        bad.setMode(MockToken.Mode.BurnsGas);
+        ILeafVoter.FeeClaim[] memory claims = new ILeafVoter.FeeClaim[](3);
+        claims[0] = ILeafVoter.FeeClaim(address(pair), 500);
+        claims[1] = ILeafVoter.FeeClaim(address(native), 500);
+        claims[2] = ILeafVoter.FeeClaim(address(broken), 500);
+        uint256 succeeded;
+
+        for (uint256 gas = 50_000; gas <= 1_500_000; gas += 5_000) {
+            uint256 snapshot = vm.snapshotState();
+            try factory.claim{gas: gas}(recipient, ID, claims, _none(), 300_000) {
+                ++succeeded;
+                assertEq(aero.balanceOf(recipient), 0.99e18);
+                assertEq(recipient.balance, 0.99 ether);
+                assertEq(bad.balanceOf(address(broken)), 5e18);
+                _assertNothingLeft();
+            } catch (bytes memory err) {
+                if (gas > 300_000) assertEq(bytes4(err), ImmutableClaimOperator.InsufficientGas.selector);
+            }
+            vm.revertToState(snapshot);
+        }
+        assertGt(succeeded, 0);
     }
 
     function test_claimFailed_carriesTheReason() public {
@@ -592,14 +644,14 @@ contract OperatorTest is Test {
         factory.claim(recipient, ID, _fees(pair), _none(), ENTRY_GAS);
     }
 
-    function test_claim_program0_claimsFees() public {
+    function test_claim_anIncentiveForProgram0_isNotAFeeClaim() public {
         _owe(pair, 1e18, 2e6);
 
+        _expectFailed(address(operator), address(pair), 0);
         factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _incentive(pair, 0), ENTRY_GAS);
 
-        assertEq(aero.balanceOf(recipient), 0.99e18);
-        assertEq(usdc.balanceOf(recipient), 1.98e6);
-        _assertNothingLeft();
+        assertEq(aero.balanceOf(recipient), 0);
+        assertEq(aero.balanceOf(address(pair)), 1e18);
     }
 
     function test_claim_skipsAZeroToken() public {

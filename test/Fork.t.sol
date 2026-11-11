@@ -4,11 +4,11 @@ pragma solidity 0.8.37;
 import {Test, Vm} from "forge-std/Test.sol";
 
 import {Deploy} from "../script/Deploy.s.sol";
+import {Discovery} from "../script/Discovery.sol";
 import {ImmutableClaimOperator} from "../src/ImmutableClaimOperator.sol";
 import {ImmutableClaimOperatorFactory} from "../src/ImmutableClaimOperatorFactory.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
 import {ILeafVoter} from "../src/interfaces/ILeafVoter.sol";
-import {IVotingRewardsManager} from "../src/interfaces/IVotingRewardsManager.sol";
 
 interface IVoter {
     function chains() external view returns (uint256[] memory);
@@ -30,18 +30,6 @@ interface ILeafVoterExtra {
         returns (address operator, uint48 lastAllocated, bool canVoteForZeroCapGauges, uint128 chainAllocation);
 }
 
-interface IFactoryRegistryExtra {
-    function gaugeToRewards(address gauge) external view returns (address);
-}
-
-interface IVotingRewardsManagerExtra {
-    function incentiveCount() external view returns (uint256);
-    function earnedIncentives(uint256 tokenId, uint256 programId, uint256 maxCheckpoints)
-        external
-        view
-        returns (uint256);
-}
-
 interface IVotingEscrowExtra {
     function ownerOf(uint256 tokenId) external view returns (address);
     function transferFrom(address from, address to, uint256 tokenId) external;
@@ -49,7 +37,6 @@ interface IVotingEscrowExtra {
 }
 
 abstract contract ForkTest is Test {
-    uint256 internal constant MAX_CHECKPOINTS = 500;
     uint256 internal constant ENTRY_GAS = 3_000_000;
     bytes32 internal constant CLAIMED = keccak256("Claimed(uint256,address,uint256,uint256)");
     bytes32 internal constant CLAIM_FAILED = keccak256("ClaimFailed(uint256,address,uint256,bytes)");
@@ -104,62 +91,33 @@ abstract contract ForkTest is Test {
     }
 
     // Where the fee Safe is not deployed yet, the same proxy stands in for it: the factory cannot exist without it.
-    function _standInForTheFeeSafe() internal virtual {
+    // Where the Safe's singleton is missing too, a contract that only accepts payments does.
+    function _standInForTheFeeSafe() internal {
         if (feeRecipient.code.length != 0) return;
-        assertGt(SAFE_SINGLETON.code.length, 0);
+        if (SAFE_SINGLETON.code.length == 0) return vm.etch(feeRecipient, hex"00");
         vm.etch(feeRecipient, SAFE_PROXY_CODE);
         vm.store(feeRecipient, 0, bytes32(uint256(uint160(SAFE_SINGLETON))));
     }
 
     function _discover() internal {
-        IFactoryRegistryExtra registry = IFactoryRegistryExtra(ILeafVoter(address(leaf)).FACTORY_REGISTRY());
-        address[] memory gauges = leaf.allocatedGauges(_stake());
-        for (uint256 i; i < gauges.length; ++i) {
-            address manager = registry.gaugeToRewards(gauges[i]);
-            if (!_runsHere(IVotingRewardsManager(manager).token0())) continue;
-            if (!_runsHere(IVotingRewardsManager(manager).token1())) continue;
-            feeClaims.push(ILeafVoter.FeeClaim(manager, MAX_CHECKPOINTS));
-            if (feeClaims.length == 1) wrappedNative = IVotingRewardsManager(manager).wrappedNative();
-            assertEq(IVotingRewardsManager(manager).wrappedNative(), wrappedNative);
-            _track(IVotingRewardsManager(manager).token0());
-            _track(IVotingRewardsManager(manager).token1());
-            uint256 programs = IVotingRewardsManagerExtra(manager).incentiveCount();
-            for (uint256 id = 1; id <= programs; ++id) {
-                if (IVotingRewardsManagerExtra(manager).earnedIncentives(_stake(), id, MAX_CHECKPOINTS) == 0) continue;
-                (address token,,,,,) = IVotingRewardsManager(manager).incentive(id);
-                if (!_runsHere(token)) continue;
-                incentiveClaims.push(ILeafVoter.IncentiveClaim(manager, id, MAX_CHECKPOINTS));
-                _track(token);
-            }
+        Discovery.Claims memory claims = Discovery.claims(address(leaf), _stake(), 0, true);
+        assertGt(claims.fees.length, 0, "the stake has nothing to claim on this chain at this block");
+        for (uint256 i; i < claims.fees.length; ++i) {
+            feeClaims.push(claims.fees[i]);
         }
-        tokens.push(address(0));
+        for (uint256 i; i < claims.incentives.length; ++i) {
+            incentiveClaims.push(claims.incentives[i]);
+        }
+        tokens = claims.tokens;
+        wrappedNative = claims.wrappedNative;
     }
 
-    // Base's native tokens have the code 0xef and run in the node itself, which a fork cannot do.
-    function _runsHere(address token) internal view returns (bool) {
-        return keccak256(token.code) != keccak256(hex"ef");
+    function _balances(address account) internal view returns (uint256[] memory) {
+        return Discovery.balances(tokens, account);
     }
 
-    function _track(address token) internal {
-        if (token == wrappedNative) return;
-        for (uint256 i; i < tokens.length; ++i) {
-            if (tokens[i] == token) return;
-        }
-        tokens.push(token);
-    }
-
-    function _balances(address account) internal view returns (uint256[] memory balances) {
-        balances = new uint256[](tokens.length);
-        for (uint256 i; i < tokens.length; ++i) {
-            balances[i] = tokens[i] == address(0) ? account.balance : IERC20(tokens[i]).balanceOf(account);
-        }
-    }
-
-    function _gained(address account, uint256[] memory before) internal view returns (uint256[] memory gained) {
-        gained = _balances(account);
-        for (uint256 i; i < gained.length; ++i) {
-            gained[i] -= before[i];
-        }
+    function _gained(address account, uint256[] memory before) internal view returns (uint256[] memory) {
+        return Discovery.gained(tokens, account, before);
     }
 
     function _claim() internal returns (Vm.Log[] memory) {
@@ -303,7 +261,7 @@ abstract contract ForkTest is Test {
             assertGe(fees[i] + 2 * entries, direct[i] / 100);
             if (direct[i] != 0) ++rewarded;
         }
-        assertGe(direct[tokens.length - 1], _minNative());
+        if (wrappedNative != address(0)) assertGe(direct[tokens.length - 1], _minNative());
         assertGe(rewarded, _minRewardedTokens());
         assertEq(_count(logs, CLAIM_FAILED), 0);
         assertLt(claimGas, directGas + 150_000 + 90_000 * entries);
@@ -531,7 +489,7 @@ contract OptimismForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 159_416_000;
+        return 159_419_000;
     }
 
     function _chainId() internal pure override returns (uint256) {
@@ -545,7 +503,7 @@ contract ArbitrumForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 523_385_000;
+        return 523_402_900;
     }
 
     function _chainId() internal pure override returns (uint256) {
@@ -559,7 +517,7 @@ contract InkForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 60_933_000;
+        return 60_938_700;
     }
 
     function _chainId() internal pure override returns (uint256) {
@@ -573,7 +531,7 @@ contract RobinhoodForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 112_005_000;
+        return 112_059_800;
     }
 
     function _chainId() internal pure override returns (uint256) {
@@ -581,14 +539,13 @@ contract RobinhoodForkTest is LeafForkTest {
     }
 }
 
-// Elysium has no Safe 1.5.0 singleton yet, so a contract that only accepts payments stands in for the fee Safe.
 contract ElysiumForkTest is LeafForkTest {
     function _rpc() internal view override returns (string memory) {
         return vm.envOr("ELYSIUM_RPC_URL", string(""));
     }
 
     function _block() internal pure override returns (uint256) {
-        return 4_958_000;
+        return 5_002_900;
     }
 
     function _chainId() internal pure override returns (uint256) {
@@ -597,10 +554,5 @@ contract ElysiumForkTest is LeafForkTest {
 
     function _stake() internal pure override returns (uint256) {
         return 10_495;
-    }
-
-    function _standInForTheFeeSafe() internal override {
-        assertEq(SAFE_SINGLETON.code.length, 0);
-        vm.etch(feeRecipient, hex"00");
     }
 }

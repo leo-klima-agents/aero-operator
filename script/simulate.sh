@@ -4,6 +4,7 @@
 # run, such as Base's native tokens and Arc's USDC.
 #
 # usage: script/simulate.sh <rpc-url> <token-id> [max-gauges] [entry-gas]
+# Off Base, where any address can be the recipient, RECIPIENT chooses it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -14,7 +15,7 @@ ENTRY_GAS=${4:-3000000}
 
 HASHES=verification/bytecode-hashes.json
 ARTIFACT=out/Simulation.sol/Simulation.json
-[ -f "$ARTIFACT" ] || forge build
+forge build > /dev/null
 LEAF=$(jq -j .deployment.leafVoter "$HASHES")
 ESCROW=$(jq -j .deployment.escrow "$HASHES")
 BASE_ID=$(jq -j .deployment.baseChainId "$HASHES")
@@ -30,7 +31,7 @@ CHAIN=$(cast chain-id --rpc-url "$RPC")
 if [ "$CHAIN" = "$BASE_ID" ]; then
   RECIPIENT=$(cast call "$ESCROW" 'ownerOf(uint256)(address)' "$ID" --rpc-url "$RPC" --block "$BLOCK")
 else
-  RECIPIENT=0x00000000000000000000000000000000000A11cE
+  RECIPIENT=${RECIPIENT:-0x00000000000000000000000000000000000A11cE}
 fi
 
 code="$SIM:$(jq -j .deployedBytecode.object "$ARTIFACT")"
@@ -56,7 +57,7 @@ seen=$(cast call "$LEAF" 'operator(uint256)(address)' "$ID" --rpc-url "$RPC" --b
 [ "$seen" = "$operator" ] || { echo "LeafVoter does not keep operators in slot $TOKEN_STATES_SLOT" >&2; exit 1; }
 
 echo "chain $CHAIN, block $BLOCK, stake $ID, recipient $RECIPIENT, clone $operator"
-direct=$(call "direct($DEP_TYPE,uint256,address,uint256)(uint256[])" "$DEP" "$ID" "$RECIPIENT" "$LIMIT" \
+direct=$(call "direct(address,uint256,address,uint256)(uint256[])" "$LEAF" "$ID" "$RECIPIENT" "$LIMIT" \
   --override-state-diff "$(as_operator "$SIM")" --json | jq -c '.[0]' | tr -d '"')
 echo "Aero's own route pays: $direct"
 call "claim($DEP_TYPE,uint256,address,uint256,uint256,uint256[])(uint256,uint256,address[],uint256[])" \
