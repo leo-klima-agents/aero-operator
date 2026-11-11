@@ -67,7 +67,9 @@ so a payment in native tokens shows the wrapped native token's address.
 ### Sales
 
 Only Base knows who owns a stake. There, a clone claims only while its recipient is the stake's owner in the escrow,
-and `claim` reverts with `NotOwner` otherwise. Selling the stake therefore stops the seller's clone on Base.
+and `claim` reverts with `NotOwner` otherwise. Selling the stake therefore stops the seller's clone on Base. The
+operator itself stays set, though: if it is the buyer's own clone, set by the seller or by an address the seller
+approved, that clone works on Base as soon as the buyer owns the stake.
 
 The other chains can't tell. A LeafVoter keeps a stake's operator when the stake changes hands, so on those chains the
 seller's clone goes on paying the seller until the buyer sets the operators again.
@@ -92,7 +94,8 @@ While a clone is your stake's operator on a chain:
 - the stake has no other operator on that chain. If Aero turns on local allocating, which is off today, only a
   chain's operator can use it, and a clone never does.
 
-If you buy a stake, set its operator on every chain it has rewards on: to your own clone, or to the zero address.
+If you buy a stake, set its operator on every chain it has rewards on, Base included: to your own clone, or to the
+zero address.
 
 ## For claimers
 
@@ -124,7 +127,9 @@ entries after it, which can then fail too: leave such an entry out.
 - Anyone can pass any registered rewards manager to `claim`, for any stake. Readers should expect `ClaimFailed` events
   and `Claimed` events for dust.
 - The fee Safe, `0x450c72de8c0079B49AcedF294a13011bd09D125B`, must exist on a chain before the factory is deployed
-  there. The deploy script refuses otherwise.
+  there, and the deploy script refuses otherwise. It can't stop anyone else, though: the factory's code and salt are
+  public, so anyone can deploy it on any chain. Fees paid on a chain without the Safe go to an address nobody
+  controls there until the Safe is deployed at it. Recipients are paid in full either way.
 
 ## Deployment
 
