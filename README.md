@@ -117,9 +117,11 @@ still owe it rewards: on the manager of every gauge the stake has been allocated
 `userRewardCheckpointIndex(tokenId)` is not 0. On a manager, `earnedFees(tokenId, maxCheckpoints)` and
 `earnedIncentives(tokenId, programId, maxCheckpoints)` estimate what a claim would pay. `maxCheckpoints` must not be 0.
 
-Choose `entryGas` well above what an entry uses. The first claim of a stake's rewards from a manager is the heaviest:
-in the fork tests, such entries used about 310,000 gas each on average on Base, and the tests pass with 3,000,000 on
-every chain. An entry that needs more than `entryGas` fails and can be claimed again with more.
+Choose `entryGas` well above what the heaviest entry uses. The first claim of a stake's fees from a manager is the
+heaviest: in the fork tests such an entry used up to about 680,000 gas on Base, and between 600,000 and 700,000 on
+Ethereum, while an incentive entry used about 300,000. With 500,000, 14 of the 15 fee entries on Base failed; with
+700,000, none did. The tests pass with 3,000,000 on every chain. An entry that needs more than `entryGas` fails and
+can be claimed again with more.
 
 `ClaimFailed` doesn't say why an entry failed. To find out, trace a simulated claim, or simulate the clone's
 `claimEntry(tokenId, votingRewardsManager, fees, programId, maxCheckpoints)` in an `eth_call` from the clone's own
@@ -128,7 +130,7 @@ LeafVoter's `NotAuthorized()` when the clone is not the stake's operator. That c
 native tokens, which a clone accepts only during a claim.
 
 The gas limit has to cover `entryGas` once more than the claim uses: before its last entry, the clone needs
-`(entryGas + 20,000) × 64 / 63` left, and through the factory 64/63 of that. With less, the whole claim reverts with
+`entryGas × 64 / 63 + 20,000` left, and through the factory 64/63 of that. With less, the whole claim reverts with
 `InsufficientGas` and pays nothing, so add a margin: entries can use more by the time the claim is included than they
 did in a simulation.
 
@@ -148,15 +150,18 @@ and Ethereum accept at most 16,777,216 gas per transaction, so split a long list
 - Whoever the escrow authorizes for a stake, its owner or an address the owner approved, can set its operators.
 - A clone can't tell a sale on any chain but Base: see [Sales](#sales).
 - A recipient that can't receive a token, such as USDC at a blocklisted address or native tokens at a contract that
-  refuses them, makes every entry paying that token fail. The same goes for the fee Safe.
+  refuses them, makes every entry paying that token fail. The same goes for the fee Safe. A fee entry pays a pool's
+  two tokens together, so the other token's fees from that manager can't be claimed through the clone either.
 - A token that charges a fee on transfers is charged twice on its way through a clone. A token whose balances move
   by themselves, or round, can leave a few of its smallest units in a clone until the next claim that pays it.
 - The fee is rounded down, so a payment of fewer than 100 of a token's smallest units pays none.
 - Tokens sent to a clone by mistake go to its recipient, less the fee, with the next claim that pays the same token.
-  Wrapped native tokens are the exception where managers pay them in native tokens: those stay in the clone. Tokens
-  sent to the factory or to the `ImmutableClaimOperator` itself are stuck there.
+  Wrapped native tokens are the exception where managers pay them in native tokens: those stay in the clone. So do
+  native tokens pushed into a clone during a claim that pays none, until a claim that does. Tokens sent to the factory
+  or to the `ImmutableClaimOperator` itself are stuck there.
 - Anyone can pass any registered rewards manager to `claim`, for any stake. Readers should expect `ClaimFailed` events
-  and `Claimed` events for dust.
+  and `Claimed` events for dust, and should value a `Claimed` amount by its token: it is the balance the token itself
+  reported.
 - The fee Safe, `0x450c72de8c0079B49AcedF294a13011bd09D125B`, must exist on a chain before the factory can: the
   constructor reverts with `NoCode` where the LeafVoter or the fee Safe has no code, and on Base where the escrow has
   none. So nobody can deploy the factory at its address on a chain the Safe is not on.
