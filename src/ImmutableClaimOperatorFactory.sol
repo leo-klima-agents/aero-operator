@@ -20,9 +20,9 @@ contract ImmutableClaimOperatorFactory {
         ILeafVoter.FeeClaim[] calldata feeClaims,
         ILeafVoter.IncentiveClaim[] calldata incentiveClaims
     ) external {
-        address operator = operatorOf(recipient);
+        bytes memory initCode = _initCode(recipient);
+        address operator = _predict(initCode);
         if (operator.code.length == 0) {
-            bytes memory initCode = _initCode(recipient);
             address deployed;
             assembly ("memory-safe") {
                 deployed := create2(0, add(initCode, 0x20), mload(initCode), 0)
@@ -32,9 +32,12 @@ contract ImmutableClaimOperatorFactory {
         ImmutableClaimOperator(payable(operator)).claim(tokenId, feeClaims, incentiveClaims);
     }
 
-    function operatorOf(address recipient) public view returns (address) {
-        bytes32 hash =
-            keccak256(abi.encodePacked(bytes1(0xff), address(this), bytes32(0), keccak256(_initCode(recipient))));
+    function operatorOf(address recipient) external view returns (address) {
+        return _predict(_initCode(recipient));
+    }
+
+    function _predict(bytes memory initCode) private view returns (address) {
+        bytes32 hash = keccak256(abi.encodePacked(bytes1(0xff), address(this), bytes32(0), keccak256(initCode)));
         return address(uint160(uint256(hash)));
     }
 

@@ -36,26 +36,31 @@ jobs:
       - run: forge test -vvv
 
   fork:
-    name: fork tests (skipped without the RPC secrets)
+    name: fork tests (each chain skipped without its RPC secret)
     runs-on: ubuntu-26.04
     env:
       BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
       ETHEREUM_RPC_URL: ${{ secrets.ETHEREUM_RPC_URL }}
+      OPTIMISM_RPC_URL: ${{ secrets.OPTIMISM_RPC_URL }}
+      ARBITRUM_RPC_URL: ${{ secrets.ARBITRUM_RPC_URL }}
+      INK_RPC_URL: ${{ secrets.INK_RPC_URL }}
+      ROBINHOOD_RPC_URL: ${{ secrets.ROBINHOOD_RPC_URL }}
+      ELYSIUM_RPC_URL: ${{ secrets.ELYSIUM_RPC_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
           persist-credentials: false
-      - if: env.BASE_RPC_URL == ''
-        run: echo "::notice::BASE_RPC_URL secret not set; Base's fork tests run locally only"
-      - if: env.ETHEREUM_RPC_URL == ''
-        run: echo "::notice::ETHEREUM_RPC_URL secret not set; Ethereum's fork tests run locally only"
+      - name: which chains have an RPC secret
+        run: |
+          for name in BASE ETHEREUM OPTIMISM ARBITRUM INK ROBINHOOD ELYSIUM; do
+            variable="${name}_RPC_URL"
+            [ -n "${!variable}" ] || echo "::warning::$variable secret not set; that chain's fork tests are skipped"
+          done
       - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
-        if: env.BASE_RPC_URL != '' || env.ETHEREUM_RPC_URL != ''
         with:
           version: ${{ env.FOUNDRY_VERSION }}
-      - if: env.BASE_RPC_URL != '' || env.ETHEREUM_RPC_URL != ''
-        run: forge test --match-path test/Fork.t.sol -vvv
+      - run: forge test --match-path test/Fork.t.sol -vvv
 
   reuse:
     name: REUSE compliance

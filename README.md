@@ -12,10 +12,10 @@ There are two contracts, both without an owner, settings or an upgrade path:
 - [`ImmutableClaimOperatorFactory`](src/ImmutableClaimOperatorFactory.sol) deploys the clones and gives their
   addresses.
 
-They are not deployed yet. On every chain where Aero's LeafVoter is at
-`0x382409fad8503FbCdbB27A4211551fa03e884078`, the factory will be at `0xeD962988E3a16A4De4352D971E1D2DC0937b3E1c` and
-the `ImmutableClaimOperator` that the clones run at `0xE966A13044dCf4Cf3Fb1773655c0Bc232Ce5bf5D`. A recipient's clone
-has the same address on all of them.
+They are not deployed yet. On every chain where Aero's LeafVoter is at `0x382409fad8503FbCdbB27A4211551fa03e884078`
+and the fee Safe exists, the factory will be at `0xdCDE42d96B4689A6bcE3b73FcdBDFc35A0e28Ca7` and the
+`ImmutableClaimOperator` that the clones run at `0xf8150847B48b12e21C3F9AC1CfA412C7C2658077`. A recipient's clone has
+the same address on all of them.
 
 ## How it works
 
@@ -40,6 +40,9 @@ and the clone's code, which holds the recipient, so it is known before the clone
 Nobody deploys clones in advance. The owner sets the address as the operator, and the factory deploys the clone with
 the first claim.
 
+Only a clone can claim. The `ImmutableClaimOperator` that the clones run has no recipient of its own: its `recipient`
+and `claim` revert with `NotClone`, so setting it as an operator by mistake pays nobody.
+
 ### Claiming
 
 `claim(recipient, tokenId, feeClaims, incentiveClaims)` on the factory deploys the recipient's clone if it has no code
@@ -57,12 +60,18 @@ from, and incentive programs to claim. The clone makes each entry its own claim:
    forwards its native balance instead.
 
 If any step of an entry reverts, the whole entry is undone: its rewards stay in the rewards manager, the clone emits
-`ClaimFailed(tokenId, votingRewardsManager, programId)`, with `programId` 0 for fees, and carries on with the next
-entry. So a token that can't be sent to the recipient or the fee Safe doesn't block the others, and the clone holds
-nothing once `claim` returns.
+`ClaimFailed(tokenId, votingRewardsManager, programId, reason)` and carries on with the next entry. `programId` is 0
+for fees, and `reason` is what the entry reverted with, such as `NotRegistered(votingRewardsManager)`,
+`TransferFailed(token)` or the LeafVoter's `NotAuthorized()` when the clone is not the stake's operator. So a token
+that can't be sent to the recipient or the fee Safe doesn't block the others, and the clone holds nothing once `claim`
+returns.
 
 For every token it forwards, the clone emits `Claimed(tokenId, token, amount, fee)`. `token` is the manager's token,
 so a payment in native tokens shows the wrapped native token's address.
+
+Program 0 means the fees everywhere: an incentive claim for program 0 claims the manager's fees.
+
+A clone accepts native tokens only during a claim, so they can't be sent to it by mistake.
 
 ### Sales
 
@@ -103,9 +112,9 @@ zero address.
 on its `FACTORY_REGISTRY` gives each gauge's rewards manager. On a manager, `earnedFees(tokenId, maxCheckpoints)` and
 `earnedIncentives(tokenId, programId, maxCheckpoints)` estimate what a claim would pay. `maxCheckpoints` must not be 0.
 
-Each entry costs about 60,000 gas more than in a claim sent through Aero's Voter. In the fork tests, 10 entries cost
-3.97M gas against 3.28M on Ethereum, and 56 entries 17.4M against 14.2M on Base. Base and Ethereum accept at most
-16,777,216 gas per transaction, so split a long list.
+Each entry costs about 60,000 gas more than in a claim sent through Aero's Voter, and the fork tests fail above
+90,000. There, 10 entries cost 3.99M gas against 3.28M on Ethereum, and 56 entries 17.4M against 14.2M on Base. Base
+and Ethereum accept at most 16,777,216 gas per transaction, so split a long list.
 
 An entry that fails by reverting costs little. One that uses up all the gas it is given leaves a 64th of it for the
 entries after it, which can then fail too: leave such an entry out.
@@ -120,39 +129,42 @@ entries after it, which can then fail too: leave such an entry out.
 - A clone can't tell a sale on any chain but Base: see [Sales](#sales).
 - A recipient that can't receive a token, such as USDC at a blocklisted address or native tokens at a contract that
   refuses them, makes every entry paying that token fail. The same goes for the fee Safe.
-- A token that charges a fee on transfers is charged twice on its way through a clone.
+- A token that charges a fee on transfers is charged twice on its way through a clone. A token whose balances move
+  by themselves, or round, can leave a few of its smallest units in a clone until the next claim that pays it.
+- The fee is rounded down, so a payment of fewer than 100 of a token's smallest units pays none.
 - Tokens sent to a clone by mistake go to its recipient, less the fee, with the next claim that pays the same token.
   Wrapped native tokens are the exception where managers pay them in native tokens: those stay in the clone. Tokens
   sent to the factory or to the `ImmutableClaimOperator` itself are stuck there.
 - Anyone can pass any registered rewards manager to `claim`, for any stake. Readers should expect `ClaimFailed` events
   and `Claimed` events for dust.
-- The fee Safe, `0x450c72de8c0079B49AcedF294a13011bd09D125B`, must exist on a chain before the factory is deployed
-  there, and the deploy script refuses otherwise. It can't stop anyone else, though: the factory's code and salt are
-  public, so anyone can deploy it on any chain. Fees paid on a chain without the Safe go to an address nobody
-  controls there until the Safe is deployed at it. Recipients are paid in full either way.
+- The fee Safe, `0x450c72de8c0079B49AcedF294a13011bd09D125B`, must exist on a chain before the factory can: the
+  constructor reverts with `NoCode` where the LeafVoter or the fee Safe has no code, and on Base where the escrow has
+  none. So nobody can deploy the factory at its address on a chain the Safe is not on.
 
 ## Deployment
 
 Not deployed yet. The table shows what each chain in `Voter.chains()` had on 2026-11-11.
 
-| Chain | Id | LeafVoter | CREATE2 deployer | Fee Safe |
-|---|---|---|---|---|
-| Base | 8453 | yes | yes | yes, a 2-of-3 Safe |
-| OP Mainnet | 10 | yes | yes | no |
-| Ethereum | 1 | yes | yes | no |
-| Arbitrum One | 42161 | yes | yes | no |
-| Ink | 57073 | yes | yes | no |
-| Robinhood Chain | 4663 | yes | yes | no |
-| Arc | 5042 | yes | yes | no |
-| Elysium | 99901 | yes | yes | no |
+| Chain | Id | LeafVoter | CREATE2 deployer | Fee Safe | Safe 1.5.0 singleton |
+|---|---|---|---|---|---|
+| Base | 8453 | yes | yes | yes, a 2-of-3 Safe | yes |
+| OP Mainnet | 10 | yes | yes | no | yes |
+| Ethereum | 1 | yes | yes | no | yes |
+| Arbitrum One | 42161 | yes | yes | no | yes |
+| Ink | 57073 | yes | yes | no | yes |
+| Robinhood Chain | 4663 | yes | yes | no | yes |
+| Arc | 5042 | yes | yes | no | yes |
+| Elysium | 99901 | yes | yes | no | no |
 
 The LeafVoter is at the same address on all eight, so one set of constructor arguments serves them all. Its
-`FACTORY_REGISTRY` differs from chain to chain, which is why the clones read it at each claim.
+`FACTORY_REGISTRY` differs from chain to chain, which is why the clones read it at each claim. The fee Safe on Base
+is a proxy to the Safe 1.5.0 singleton at `0xEdd160fEBBD92E350D4D398fb636302fccd67C7e`, which Elysium doesn't have
+yet.
 
 | | |
 |---|---|
-| Factory | `0xeD962988E3a16A4De4352D971E1D2DC0937b3E1c` |
-| `ImmutableClaimOperator` | `0xE966A13044dCf4Cf3Fb1773655c0Bc232Ce5bf5D`, created by the factory's constructor |
+| Factory | `0xdCDE42d96B4689A6bcE3b73FcdBDFc35A0e28Ca7` |
+| `ImmutableClaimOperator` | `0xf8150847B48b12e21C3F9AC1CfA412C7C2658077`, created by the factory's constructor |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
 | Base's chain id | 8453 |
@@ -169,18 +181,19 @@ Deployment steps, for each chain:
 
 1. Install Foundry v1.9.0, the version CI uses, with `foundryup --install v1.9.0`. Another version can compile
    different bytecode.
-2. Run `forge test` with `BASE_RPC_URL` and `ETHEREUM_RPC_URL` set, then `script/check-verification.sh`.
+2. Run `forge test` with the chains' RPCs set, then `script/check-verification.sh`.
 3. Make sure the fee Safe exists on the chain, at the address above.
-4. Do a dry run with `forge script script/Deploy.s.sol --rpc-url $RPC_URL`, and check that it logs the addresses in
+4. Run `script/simulate.sh $RPC_URL <token-id>` for a stake with rewards on the chain.
+5. Do a dry run with `forge script script/Deploy.s.sol --rpc-url $RPC_URL`, and check that it logs the addresses in
    the table above.
-5. Deploy, then verify both contracts on the chain's explorer and on Sourcify:
+6. Deploy, then verify both contracts on the chain's explorer and on Sourcify:
 
 ```
 forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --ledger
 ARGS=$(jq -j .deployment.constructorArgs verification/bytecode-hashes.json)
-forge verify-contract 0xeD962988E3a16A4De4352D971E1D2DC0937b3E1c src/ImmutableClaimOperatorFactory.sol:ImmutableClaimOperatorFactory \
+forge verify-contract 0xdCDE42d96B4689A6bcE3b73FcdBDFc35A0e28Ca7 src/ImmutableClaimOperatorFactory.sol:ImmutableClaimOperatorFactory \
   --rpc-url $RPC_URL --constructor-args $ARGS --license-type MIT --watch
-forge verify-contract 0xE966A13044dCf4Cf3Fb1773655c0Bc232Ce5bf5D src/ImmutableClaimOperator.sol:ImmutableClaimOperator \
+forge verify-contract 0xf8150847B48b12e21C3F9AC1CfA412C7C2658077 src/ImmutableClaimOperator.sol:ImmutableClaimOperator \
   --rpc-url $RPC_URL --constructor-args $ARGS --license-type MIT --watch
 ```
 
@@ -190,9 +203,9 @@ To check that the deployed contracts are this repository's code, compare their c
 `verification/bytecode-hashes.json`, which `script/check-verification.sh` checks against a build of this repository:
 
 ```
-cast keccak $(cast code 0xeD962988E3a16A4De4352D971E1D2DC0937b3E1c --rpc-url $RPC_URL)
+cast keccak $(cast code 0xdCDE42d96B4689A6bcE3b73FcdBDFc35A0e28Ca7 --rpc-url $RPC_URL)
 jq -j .deployment.factoryRuntimeKeccak verification/bytecode-hashes.json
-cast keccak $(cast code 0xE966A13044dCf4Cf3Fb1773655c0Bc232Ce5bf5D --rpc-url $RPC_URL)
+cast keccak $(cast code 0xf8150847B48b12e21C3F9AC1CfA412C7C2658077 --rpc-url $RPC_URL)
 jq -j .deployment.implementationRuntimeKeccak verification/bytecode-hashes.json
 ```
 
@@ -201,15 +214,28 @@ A clone's code is `0x363d3d373d3d3d363d73`, the `ImmutableClaimOperator`'s addre
 
 ## Development
 
-You need [Foundry](https://getfoundry.sh). The fork tests also need archive RPCs: Base's in `BASE_RPC_URL` and
-Ethereum's in `ETHEREUM_RPC_URL`.
+You need [Foundry](https://getfoundry.sh). The fork tests also need archive RPCs, each chain's in its own variable:
+
+| Chain | Variable | Stake |
+|---|---|---|
+| Base | `BASE_RPC_URL` | 621 |
+| Ethereum | `ETHEREUM_RPC_URL` | 621 |
+| OP Mainnet | `OPTIMISM_RPC_URL` | 10426 |
+| Arbitrum One | `ARBITRUM_RPC_URL` | 10426 |
+| Ink | `INK_RPC_URL` | 10426 |
+| Robinhood Chain | `ROBINHOOD_RPC_URL` | 10426 |
+| Elysium | `ELYSIUM_RPC_URL` | 10495 |
 
 - `forge test` runs the unit tests, and each chain's fork tests when its RPC is set. The fork tests run against the
-  blocks and the stake named in [`test/Fork.t.sol`](test/Fork.t.sol). On each chain they deploy the factory with the
-  deploy script, set a clone as a real stake's operator, and compare what a claim through it pays with the same claim
-  sent by Aero's own route.
-- Some of Base's tokens have the code `0xef` and run in the node itself, which Foundry's fork can't do. The fork tests
-  leave out the rewards managers that pay them.
+  blocks and the stakes named in [`test/Fork.t.sol`](test/Fork.t.sol). On each chain they deploy the factory with the
+  deploy script, set a clone as a real stake's operator, and compare what a claim through it pays, and what its events
+  say, with the same claim sent by Aero's own route. Where the fee Safe is not deployed yet, a copy of its proxy
+  stands in for it; on Elysium, a contract that only accepts payments.
+- Some tokens run in the node itself, which Foundry's fork can't do: Base's native tokens, whose code is `0xef`, and
+  Arc's USDC. The Base fork tests leave out the rewards managers that pay them, and Arc has no fork tests.
+- `script/simulate.sh <rpc-url> <token-id> [max-gauges]` covers those tokens. In `eth_call`s on a live node, with
+  state overrides and nothing sent, it deploys the factory, makes the recipient's clone the stake's operator, claims
+  everything the stake is owed and checks it against Aero's own route. It needs a node that accepts state overrides.
 - `script/check-verification.sh` checks that `verification/` and this file's addresses match the build.
 - `script/refresh-verification.sh` regenerates `verification/` after a change to the source or the deploy script.
 

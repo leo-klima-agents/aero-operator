@@ -14,13 +14,18 @@ contract ImmutableClaimOperator {
     address public immutable escrow;
     uint256 public immutable baseChainId;
     address public immutable feeRecipient;
+    address private immutable implementation = address(this);
 
     bool private transient locked;
 
     event Claimed(uint256 indexed tokenId, address indexed token, uint256 amount, uint256 fee);
-    event ClaimFailed(uint256 indexed tokenId, address indexed votingRewardsManager, uint256 programId);
+    event ClaimFailed(
+        uint256 indexed tokenId, address indexed votingRewardsManager, uint256 indexed programId, bytes reason
+    );
 
-    error ZeroAddress();
+    error NoCode(address account);
+    error NotClone();
+    error NotClaiming();
     error Reentrancy();
     error NotOwner();
     error NotSelf();
@@ -39,19 +44,25 @@ contract ImmutableClaimOperator {
         _;
     }
 
+    // forge-lint: disable-next-line(missing-zero-check)
     constructor(address leafVoter_, address escrow_, uint256 baseChainId_, address feeRecipient_) {
-        if (leafVoter_ == address(0) || escrow_ == address(0) || feeRecipient_ == address(0)) revert ZeroAddress();
+        if (leafVoter_.code.length == 0) revert NoCode(leafVoter_);
+        if (feeRecipient_.code.length == 0) revert NoCode(feeRecipient_);
+        if (block.chainid == baseChainId_ && escrow_.code.length == 0) revert NoCode(escrow_);
         leafVoter = leafVoter_;
         escrow = escrow_;
         baseChainId = baseChainId_;
         feeRecipient = feeRecipient_;
     }
 
-    receive() external payable {}
+    receive() external payable {
+        if (!locked) revert NotClaiming();
+    }
 
     function recipient() public view returns (address account) {
+        if (address(this) == implementation) revert NotClone();
         assembly ("memory-safe") {
-            extcodecopy(address(), 0x00, 0x2d, 0x14)
+            extcodecopy(address(), 0x00, sub(extcodesize(address()), 0x14), 0x14)
             account := shr(96, mload(0x00))
         }
     }
@@ -61,55 +72,62 @@ contract ImmutableClaimOperator {
         ILeafVoter.FeeClaim[] calldata feeClaims,
         ILeafVoter.IncentiveClaim[] calldata incentiveClaims
     ) external nonReentrant {
-        if (block.chainid == baseChainId && IVotingEscrow(escrow).ownerOf(tokenId) != recipient()) revert NotOwner();
+        address account = recipient();
+        if (block.chainid == baseChainId && IVotingEscrow(escrow).ownerOf(tokenId) != account) revert NotOwner();
         for (uint256 i; i < feeClaims.length; ++i) {
-            try this.claimFees(tokenId, feeClaims[i]) {}
-            catch {
-                emit ClaimFailed(tokenId, feeClaims[i].votingRewardsManager, 0);
-            }
+            _try(tokenId, feeClaims[i].votingRewardsManager, 0, feeClaims[i].maxCheckpoints);
         }
         for (uint256 i; i < incentiveClaims.length; ++i) {
-            try this.claimIncentives(tokenId, incentiveClaims[i]) {}
-            catch {
-                emit ClaimFailed(tokenId, incentiveClaims[i].votingRewardsManager, incentiveClaims[i].programId);
-            }
+            ILeafVoter.IncentiveClaim calldata c = incentiveClaims[i];
+            _try(tokenId, c.votingRewardsManager, c.programId, c.maxCheckpoints);
         }
     }
 
-    function claimFees(uint256 tokenId, ILeafVoter.FeeClaim calldata feeClaim) external onlySelf {
-        IVotingRewardsManager manager = _manager(feeClaim.votingRewardsManager);
-        ILeafVoter.FeeClaim[] memory feeClaims = new ILeafVoter.FeeClaim[](1);
-        feeClaims[0] = feeClaim;
-        ILeafVoter(leafVoter).claimRewards(tokenId, address(this), feeClaims, new ILeafVoter.IncentiveClaim[](0));
-        address native = manager.wrappedNative();
-        _forward(tokenId, manager.token0(), native);
-        _forward(tokenId, manager.token1(), native);
-    }
-
-    function claimIncentives(uint256 tokenId, ILeafVoter.IncentiveClaim calldata incentiveClaim) external onlySelf {
-        IVotingRewardsManager manager = _manager(incentiveClaim.votingRewardsManager);
-        ILeafVoter.IncentiveClaim[] memory incentiveClaims = new ILeafVoter.IncentiveClaim[](1);
-        incentiveClaims[0] = incentiveClaim;
-        ILeafVoter(leafVoter).claimRewards(tokenId, address(this), new ILeafVoter.FeeClaim[](0), incentiveClaims);
-        (address token,,,,,) = manager.incentive(incentiveClaim.programId);
-        _forward(tokenId, token, manager.wrappedNative());
-    }
-
-    function _manager(address votingRewardsManager) private view returns (IVotingRewardsManager) {
+    function claimEntry(uint256 tokenId, address votingRewardsManager, uint256 programId, uint256 maxCheckpoints)
+        external
+        onlySelf
+    {
         address registry = ILeafVoter(leafVoter).FACTORY_REGISTRY();
         if (IFactoryRegistry(registry).rewardsToGauge(votingRewardsManager) == address(0)) {
             revert NotRegistered(votingRewardsManager);
         }
-        return IVotingRewardsManager(votingRewardsManager);
+        bool fees = programId == 0;
+        ILeafVoter.FeeClaim[] memory feeClaims = new ILeafVoter.FeeClaim[](fees ? 1 : 0);
+        ILeafVoter.IncentiveClaim[] memory incentiveClaims = new ILeafVoter.IncentiveClaim[](fees ? 0 : 1);
+        if (fees) feeClaims[0] = ILeafVoter.FeeClaim(votingRewardsManager, maxCheckpoints);
+        else incentiveClaims[0] = ILeafVoter.IncentiveClaim(votingRewardsManager, programId, maxCheckpoints);
+        ILeafVoter(leafVoter).claimRewards(tokenId, address(this), feeClaims, incentiveClaims);
+
+        IVotingRewardsManager manager = IVotingRewardsManager(votingRewardsManager);
+        address native = manager.wrappedNative();
+        if (fees) {
+            _forward(tokenId, manager.token0(), native);
+            _forward(tokenId, manager.token1(), native);
+        } else {
+            // forge-lint: disable-next-line(unused-return)
+            (address token,,,,,) = manager.incentive(programId);
+            _forward(tokenId, token, native);
+        }
+    }
+
+    function _try(uint256 tokenId, address votingRewardsManager, uint256 programId, uint256 maxCheckpoints) private {
+        // forge-lint: disable-next-line(calls-loop, reentrancy-no-eth)
+        try this.claimEntry(tokenId, votingRewardsManager, programId, maxCheckpoints) {}
+        catch (bytes memory reason) {
+            // forge-lint: disable-next-line(reentrancy-events)
+            emit ClaimFailed(tokenId, votingRewardsManager, programId, reason);
+        }
     }
 
     function _forward(uint256 tokenId, address token, address native) private {
+        if (token == address(0)) return;
         bool isNative = token == native;
         uint256 amount = isNative ? address(this).balance : IERC20(token).balanceOf(address(this));
         if (amount == 0) return;
         uint256 fee = amount * FEE_BPS / 10_000;
         if (fee != 0) _send(token, isNative, feeRecipient, fee);
         _send(token, isNative, recipient(), amount - fee);
+        // forge-lint: disable-next-line(reentrancy-events)
         emit Claimed(tokenId, token, amount, fee);
     }
 

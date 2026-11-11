@@ -173,6 +173,10 @@ contract MockLeafVoter {
     }
 }
 
+contract MockSafe {
+    receive() external payable {}
+}
+
 contract MockVotingEscrow {
     mapping(uint256 tokenId => address) public ownerOf;
 

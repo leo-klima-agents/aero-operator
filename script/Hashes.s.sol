@@ -8,8 +8,12 @@ import {Deploy} from "./Deploy.s.sol";
 contract Hashes is Deploy {
     function record() external {
         string memory artifact = vm.readFile("out/ImmutableClaimOperatorFactory.sol/ImmutableClaimOperatorFactory.json");
-        (bool ok,) = CREATE2_FACTORY.call(bytes.concat(SALT, initCode()));
-        require(ok && predict().code.length != 0, "CREATE2 deploy failed");
+        if (predict().code.length == 0) {
+            if (LEAF_VOTER.code.length == 0) vm.etch(LEAF_VOTER, hex"00");
+            if (FEE_RECIPIENT.code.length == 0) vm.etch(FEE_RECIPIENT, hex"00");
+            (bool ok,) = CREATE2_FACTORY.call(bytes.concat(SALT, initCode()));
+            require(ok && predict().code.length != 0, "CREATE2 deploy failed");
+        }
 
         string memory dep = "deployment";
         string memory depJson = vm.serializeAddress(dep, "leafVoter", LEAF_VOTER);
