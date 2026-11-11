@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.37;
 
-import {Test, Vm} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 
 import {ImmutableClaimOperator} from "../src/ImmutableClaimOperator.sol";
 import {ImmutableClaimOperatorFactory} from "../src/ImmutableClaimOperatorFactory.sol";
@@ -59,9 +59,7 @@ contract OperatorTest is Test {
     address internal feeRecipient;
 
     event Claimed(uint256 indexed tokenId, address indexed token, uint256 amount, uint256 fee);
-    event ClaimFailed(
-        uint256 indexed tokenId, address indexed votingRewardsManager, uint256 indexed programId, bytes reason
-    );
+    event ClaimFailed(uint256 indexed tokenId, address indexed votingRewardsManager, uint256 indexed programId);
 
     function setUp() public {
         feeRecipient = address(new MockSafe());
@@ -124,8 +122,8 @@ contract OperatorTest is Test {
     }
 
     function _expectFailed(address emitter, address manager, uint256 programId) internal {
-        vm.expectEmit(true, true, true, false, emitter);
-        emit ClaimFailed(ID, manager, programId, "");
+        vm.expectEmit(emitter);
+        emit ClaimFailed(ID, manager, programId);
     }
 
     function _none() internal pure returns (ILeafVoter.IncentiveClaim[] memory) {
@@ -529,8 +527,7 @@ contract OperatorTest is Test {
     function test_claim_aBudgetTooSmall_failsTheEntriesAndKeepsTheRewards() public {
         _owe(pair, 1e18, 2e6);
 
-        vm.expectEmit(address(operator));
-        emit ClaimFailed(ID, address(pair), 0, "");
+        _expectFailed(address(operator), address(pair), 0);
         factory.claim(recipient, ID, _fees(pair), _none(), 20_000);
 
         assertEq(aero.balanceOf(recipient), 0);
@@ -538,7 +535,7 @@ contract OperatorTest is Test {
         _assertNothingLeft();
     }
 
-    function test_claimFailed_keepsAtMost256BytesOfTheReason() public {
+    function test_claim_aHugeRevertDoesNotBlockTheOthers() public {
         address bomb = address(new MockBomb());
         registry.register(bomb);
         _owe(pair, 1e18, 2e6);
@@ -546,29 +543,41 @@ contract OperatorTest is Test {
         ILeafVoter.FeeClaim[] memory claims = new ILeafVoter.FeeClaim[](2);
         claims[0] = ILeafVoter.FeeClaim(bomb, 500);
         claims[1] = ILeafVoter.FeeClaim(address(pair), 500);
-        vm.recordLogs();
+        _expectFailed(address(operator), bomb, 0);
         factory.claim{gas: 2_000_000}(recipient, ID, claims, _none(), 400_000);
 
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        uint256 failed;
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics[0] != ClaimFailed.selector) continue;
-            ++failed;
-            assertEq(address(uint160(uint256(logs[i].topics[2]))), bomb);
-            assertEq(abi.decode(logs[i].data, (bytes)).length, 256);
-        }
-        assertEq(failed, 1);
         assertEq(aero.balanceOf(recipient), 0.99e18);
+        _assertNothingLeft();
     }
 
     function test_claimEntry_onlyFromTheCloneItself() public {
         factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
         _owe(pair, 1e18, 2e6);
-        ImmutableClaimOperator.Entry memory entry =
-            ImmutableClaimOperator.Entry(ID, address(this), address(registry), address(pair), true, 0, 500);
 
         vm.expectRevert(ImmutableClaimOperator.NotSelf.selector);
-        operator.claimEntry(entry);
+        operator.claimEntry(ID, address(pair), true, 0, 500);
+        vm.expectRevert(ImmutableClaimOperator.NotSelf.selector);
+        operator.claimEntry(ID, address(pair), false, 1, 500);
+    }
+
+    function test_claimEntry_simulatedFromTheClone_givesTheReason() public {
+        factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+        MockRewardsManager rogue = new MockRewardsManager(address(voter), address(aero), address(usdc), address(weth));
+        _owe(pair, 1e18, 2e6);
+        usdc.setBlocked(recipient, true);
+
+        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.NotRegistered.selector, rogue));
+        vm.prank(address(operator));
+        operator.claimEntry(ID, address(rogue), true, 0, 500);
+
+        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.TransferFailed.selector, usdc));
+        vm.prank(address(operator));
+        operator.claimEntry(ID, address(pair), true, 0, 500);
+
+        voter.setOperator(ID, address(0));
+        vm.expectRevert(MockLeafVoter.NotAuthorized.selector);
+        vm.prank(address(operator));
+        operator.claimEntry(ID, address(pair), true, 0, 500);
     }
 
     function test_aProxyWithoutARecipient_isNotAClone() public {
@@ -621,27 +630,6 @@ contract OperatorTest is Test {
             vm.revertToState(snapshot);
         }
         assertGt(succeeded, 0);
-    }
-
-    function test_claimFailed_carriesTheReason() public {
-        MockRewardsManager rogue = new MockRewardsManager(address(voter), address(aero), address(usdc), address(weth));
-        _owe(pair, 1e18, 2e6);
-        usdc.setBlocked(recipient, true);
-
-        vm.expectEmit(address(operator));
-        emit ClaimFailed(
-            ID, address(rogue), 0, abi.encodeWithSelector(ImmutableClaimOperator.NotRegistered.selector, rogue)
-        );
-        vm.expectEmit(address(operator));
-        emit ClaimFailed(
-            ID, address(pair), 0, abi.encodeWithSelector(ImmutableClaimOperator.TransferFailed.selector, usdc)
-        );
-        factory.claim(recipient, ID, _fees(rogue, pair), _none(), ENTRY_GAS);
-
-        voter.setOperator(ID, address(0));
-        vm.expectEmit(address(operator));
-        emit ClaimFailed(ID, address(pair), 0, abi.encodeWithSelector(MockLeafVoter.NotAuthorized.selector));
-        factory.claim(recipient, ID, _fees(pair), _none(), ENTRY_GAS);
     }
 
     function test_claim_anIncentiveForProgram0_isNotAFeeClaim() public {

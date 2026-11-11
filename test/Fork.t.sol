@@ -39,7 +39,7 @@ interface IVotingEscrowExtra {
 abstract contract ForkTest is Test {
     uint256 internal constant ENTRY_GAS = 3_000_000;
     bytes32 internal constant CLAIMED = keccak256("Claimed(uint256,address,uint256,uint256)");
-    bytes32 internal constant CLAIM_FAILED = keccak256("ClaimFailed(uint256,address,uint256,bytes)");
+    bytes32 internal constant CLAIM_FAILED = keccak256("ClaimFailed(uint256,address,uint256)");
     // The fee Safe's proxy as deployed on Base, and the Safe 1.5.0 singleton it points to.
     address internal constant SAFE_SINGLETON = 0xEdd160fEBBD92E350D4D398fb636302fccd67C7e;
     bytes internal constant SAFE_PROXY_CODE =
@@ -489,7 +489,7 @@ contract OptimismForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 159_419_000;
+        return 159_419_700;
     }
 
     function _chainId() internal pure override returns (uint256) {
@@ -503,7 +503,7 @@ contract ArbitrumForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 523_402_900;
+        return 523_406_900;
     }
 
     function _chainId() internal pure override returns (uint256) {
@@ -517,7 +517,7 @@ contract InkForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 60_938_700;
+        return 60_939_900;
     }
 
     function _chainId() internal pure override returns (uint256) {
@@ -531,7 +531,7 @@ contract RobinhoodForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 112_059_800;
+        return 112_071_600;
     }
 
     function _chainId() internal pure override returns (uint256) {
@@ -545,7 +545,7 @@ contract ElysiumForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 5_002_900;
+        return 5_010_400;
     }
 
     function _chainId() internal pure override returns (uint256) {

@@ -13,8 +13,8 @@ There are two contracts, both without an owner, settings or an upgrade path:
   addresses.
 
 They are not deployed yet. On every chain where Aero's LeafVoter is at `0x382409fad8503FbCdbB27A4211551fa03e884078`
-and the fee Safe exists, the factory will be at `0x1f9Dc466C887b959Be8e6dbE4dEE830a0ddc4b34` and the
-`ImmutableClaimOperator` that the clones run at `0x96D40eF01988f0f8260F0f8e369954995c127b07`. A recipient's clone has
+and the fee Safe exists, the factory will be at `0x88F46265849b2d5b1b5f225c5Da78025D1d59452` and the
+`ImmutableClaimOperator` that the clones run at `0xE2bdd11e230C3dAeCeb7681E4eaD172bD657D66B`. A recipient's clone has
 the same address on all of them.
 
 ## How it works
@@ -61,12 +61,9 @@ from, and incentive programs to claim. The clone makes each entry its own claim:
    forwards its native balance instead.
 
 If any step of an entry fails, the whole entry is undone: its rewards stay in the rewards manager, the clone emits
-`ClaimFailed(tokenId, votingRewardsManager, programId, reason)` and carries on with the next entry. `programId` is 0
-for fees, and `reason` is the first 256 bytes of what the entry reverted with, such as
-`NotRegistered(votingRewardsManager)`, `TransferFailed(token)` or the LeafVoter's `NotAuthorized()` when the clone is
-not the stake's operator. It is empty when the entry ran out of gas, and when it reverted without a reason. So a
-token that can't be sent to the recipient or the fee Safe doesn't block the others, and the clone holds nothing once
-`claim` returns.
+`ClaimFailed(tokenId, votingRewardsManager, programId)`, with `programId` 0 for fees, and carries on with the next
+entry. So a token that can't be sent to the recipient or the fee Safe doesn't block the others, and the clone holds
+nothing once `claim` returns.
 
 `entryGas` is the gas each entry may use, the clone's own call included. Before an entry, `claim` reverts with
 `InsufficientGas` unless it can pass `entryGas` on: a call can pass on 63/64 of the gas left, and `claim` first sets
@@ -122,9 +119,13 @@ still owe it rewards: on the manager of every gauge the stake has been allocated
 
 Choose `entryGas` well above what an entry uses. The first claim of a stake's rewards from a manager is the heaviest:
 in the fork tests, such entries used about 310,000 gas each on average on Base, and the tests pass with 3,000,000 on
-every chain. An entry that needs more than `entryGas` fails with an empty `reason` and can be claimed again with more.
-An empty `reason` can also be a revert without one, which more gas doesn't cure: simulate the entry with more before
-sending it again.
+every chain. An entry that needs more than `entryGas` fails and can be claimed again with more.
+
+`ClaimFailed` doesn't say why an entry failed. To find out, trace a simulated claim, or simulate the clone's
+`claimEntry(tokenId, votingRewardsManager, fees, programId, maxCheckpoints)` in an `eth_call` from the clone's own
+address: it reverts with the reason, such as `NotRegistered(votingRewardsManager)`, `TransferFailed(token)` or the
+LeafVoter's `NotAuthorized()` when the clone is not the stake's operator. That call can't show an entry that pays
+native tokens, which a clone accepts only during a claim.
 
 The gas limit has to cover `entryGas` once more than the claim uses: before its last entry, the clone needs
 `(entryGas + 20,000) × 64 / 63` left, and through the factory 64/63 of that. With less, the whole claim reverts with
@@ -132,7 +133,7 @@ The gas limit has to cover `entryGas` once more than the claim uses: before its 
 did in a simulation.
 
 Each entry costs about 60,000 gas more than in a claim sent through Aero's Voter, and the fork tests fail above
-90,000. There, 10 entries cost 3.99M gas against 3.28M on Ethereum, and 56 entries 17.4M against 14.2M on Base. Base
+90,000. There, 10 entries cost 4.02M gas against 3.28M on Ethereum, and 56 entries 17.5M against 14.2M on Base. Base
 and Ethereum accept at most 16,777,216 gas per transaction, so split a long list.
 
 ## Trust and limitations
@@ -182,8 +183,8 @@ yet.
 
 | | |
 |---|---|
-| Factory | `0x1f9Dc466C887b959Be8e6dbE4dEE830a0ddc4b34` |
-| `ImmutableClaimOperator` | `0x96D40eF01988f0f8260F0f8e369954995c127b07`, created by the factory's constructor |
+| Factory | `0x88F46265849b2d5b1b5f225c5Da78025D1d59452` |
+| `ImmutableClaimOperator` | `0xE2bdd11e230C3dAeCeb7681E4eaD172bD657D66B`, created by the factory's constructor |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
 | Base's chain id | 8453 |
@@ -210,9 +211,9 @@ Deployment steps, for each chain:
 ```
 forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --ledger
 ARGS=$(jq -j .deployment.constructorArgs verification/bytecode-hashes.json)
-forge verify-contract 0x1f9Dc466C887b959Be8e6dbE4dEE830a0ddc4b34 src/ImmutableClaimOperatorFactory.sol:ImmutableClaimOperatorFactory \
+forge verify-contract 0x88F46265849b2d5b1b5f225c5Da78025D1d59452 src/ImmutableClaimOperatorFactory.sol:ImmutableClaimOperatorFactory \
   --rpc-url $RPC_URL --constructor-args $ARGS --license-type MIT --watch
-forge verify-contract 0x96D40eF01988f0f8260F0f8e369954995c127b07 src/ImmutableClaimOperator.sol:ImmutableClaimOperator \
+forge verify-contract 0xE2bdd11e230C3dAeCeb7681E4eaD172bD657D66B src/ImmutableClaimOperator.sol:ImmutableClaimOperator \
   --rpc-url $RPC_URL --constructor-args $ARGS --license-type MIT --watch
 ```
 
@@ -222,9 +223,9 @@ To check that the deployed contracts are this repository's code, compare their c
 `verification/bytecode-hashes.json`, which `script/check-verification.sh` checks against a build of this repository:
 
 ```
-cast keccak $(cast code 0x1f9Dc466C887b959Be8e6dbE4dEE830a0ddc4b34 --rpc-url $RPC_URL)
+cast keccak $(cast code 0x88F46265849b2d5b1b5f225c5Da78025D1d59452 --rpc-url $RPC_URL)
 jq -j .deployment.factoryRuntimeKeccak verification/bytecode-hashes.json
-cast keccak $(cast code 0x96D40eF01988f0f8260F0f8e369954995c127b07 --rpc-url $RPC_URL)
+cast keccak $(cast code 0xE2bdd11e230C3dAeCeb7681E4eaD172bD657D66B --rpc-url $RPC_URL)
 jq -j .deployment.implementationRuntimeKeccak verification/bytecode-hashes.json
 ```
 
