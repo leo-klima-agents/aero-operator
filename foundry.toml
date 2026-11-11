@@ -1,0 +1,19 @@
+[profile.default]
+solc_version = "0.8.37"
+evm_version = "prague"
+optimizer = true
+optimizer_runs = 1_000_000
+via_ir = true
+bytecode_hash = "ipfs"
+cbor_metadata = true
+remappings = ["forge-std/=lib/forge-std/src/"]
+fs_permissions = [
+  { access = "read", path = "./out" },
+  { access = "read-write", path = "./verification" },
+]
+
+[profile.ci.fuzz]
+runs = 10_000
+
+[lint]
+exclude_lints = ["calls-loop", "reentrancy-events", "reentrancy-no-eth", "unused-return"]

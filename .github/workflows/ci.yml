@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  FOUNDRY_PROFILE: ci
+  FOUNDRY_VERSION: v1.9.0
+
+jobs:
+  check:
+    name: fmt, build, test
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+      - run: forge fmt --check
+      - run: shellcheck -x script/*.sh
+      - run: forge build --sizes
+      - run: forge lint --deny warnings
+      - name: foundry.lock matches the forge-std submodule
+        run: |
+          locked=$(jq -j '."lib/forge-std".rev' foundry.lock)
+          actual=$(git -C lib/forge-std rev-parse HEAD)
+          [ "$locked" = "$actual" ] || { echo "::error::foundry.lock pins $locked but lib/forge-std is at $actual"; exit 1; }
+      - run: forge test -vvv
+
+  fork:
+    name: fork tests (skipped without the RPC secrets)
+    runs-on: ubuntu-26.04
+    env:
+      BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
+      ETHEREUM_RPC_URL: ${{ secrets.ETHEREUM_RPC_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - if: env.BASE_RPC_URL == ''
+        run: echo "::notice::BASE_RPC_URL secret not set; Base's fork tests run locally only"
+      - if: env.ETHEREUM_RPC_URL == ''
+        run: echo "::notice::ETHEREUM_RPC_URL secret not set; Ethereum's fork tests run locally only"
+      - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
+        if: env.BASE_RPC_URL != '' || env.ETHEREUM_RPC_URL != ''
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+      - if: env.BASE_RPC_URL != '' || env.ETHEREUM_RPC_URL != ''
+        run: forge test --match-path test/Fork.t.sol -vvv
+
+  reuse:
+    name: REUSE compliance
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+
+  reproducible-build:
+    name: reproducible build
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+      - name: two clean builds are identical
+        run: |
+          for i in 1 2; do
+            forge clean
+            forge build --force
+            for name in ImmutableClaimOperatorFactory ImmutableClaimOperator; do
+              jq -j '.deployedBytecode.object' "out/$name.sol/$name.json" > "/tmp/$name.runtime$i.hex"
+              jq -j '.bytecode.object' "out/$name.sol/$name.json" > "/tmp/$name.creation$i.hex"
+            done
+          done
+          for name in ImmutableClaimOperatorFactory ImmutableClaimOperator; do
+            cmp "/tmp/$name.runtime1.hex" "/tmp/$name.runtime2.hex"
+            cmp "/tmp/$name.creation1.hex" "/tmp/$name.creation2.hex"
+          done
+      - run: ./script/check-verification.sh
