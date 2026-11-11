@@ -9,6 +9,7 @@ import {IVotingRewardsManager} from "./interfaces/IVotingRewardsManager.sol";
 
 contract ImmutableClaimOperator {
     uint256 public constant FEE_BPS = 100;
+    uint256 private constant MAX_REASON = 256;
 
     address public immutable leafVoter;
     address public immutable escrow;
@@ -26,6 +27,7 @@ contract ImmutableClaimOperator {
     error NoCode(address account);
     error NotClone();
     error NotClaiming();
+    error InsufficientGas();
     error Reentrancy();
     error NotOwner();
     error NotSelf();
@@ -70,16 +72,17 @@ contract ImmutableClaimOperator {
     function claim(
         uint256 tokenId,
         ILeafVoter.FeeClaim[] calldata feeClaims,
-        ILeafVoter.IncentiveClaim[] calldata incentiveClaims
+        ILeafVoter.IncentiveClaim[] calldata incentiveClaims,
+        uint256 entryGas
     ) external nonReentrant {
         address account = recipient();
         if (block.chainid == baseChainId && IVotingEscrow(escrow).ownerOf(tokenId) != account) revert NotOwner();
         for (uint256 i; i < feeClaims.length; ++i) {
-            _try(tokenId, feeClaims[i].votingRewardsManager, 0, feeClaims[i].maxCheckpoints);
+            _try(tokenId, feeClaims[i].votingRewardsManager, 0, feeClaims[i].maxCheckpoints, entryGas);
         }
         for (uint256 i; i < incentiveClaims.length; ++i) {
             ILeafVoter.IncentiveClaim calldata c = incentiveClaims[i];
-            _try(tokenId, c.votingRewardsManager, c.programId, c.maxCheckpoints);
+            _try(tokenId, c.votingRewardsManager, c.programId, c.maxCheckpoints, entryGas);
         }
     }
 
@@ -110,10 +113,27 @@ contract ImmutableClaimOperator {
         }
     }
 
-    function _try(uint256 tokenId, address votingRewardsManager, uint256 programId, uint256 maxCheckpoints) private {
+    function _try(
+        uint256 tokenId,
+        address votingRewardsManager,
+        uint256 programId,
+        uint256 maxCheckpoints,
+        uint256 entryGas
+    ) private {
+        // forge-lint: disable-next-line(require-revert-in-loop)
+        if (gasleft() < entryGas * 64 / 63) revert InsufficientGas();
         // forge-lint: disable-next-line(calls-loop, reentrancy-no-eth)
-        try this.claimEntry(tokenId, votingRewardsManager, programId, maxCheckpoints) {}
-        catch (bytes memory reason) {
+        try this.claimEntry{gas: entryGas}(tokenId, votingRewardsManager, programId, maxCheckpoints) {}
+        catch {
+            bytes memory reason;
+            assembly ("memory-safe") {
+                let size := returndatasize()
+                if gt(size, MAX_REASON) { size := MAX_REASON }
+                reason := mload(0x40)
+                mstore(reason, size)
+                returndatacopy(add(reason, 0x20), 0, size)
+                mstore(0x40, add(add(reason, 0x20), and(add(size, 0x1f), not(0x1f))))
+            }
             // forge-lint: disable-next-line(reentrancy-events)
             emit ClaimFailed(tokenId, votingRewardsManager, programId, reason);
         }

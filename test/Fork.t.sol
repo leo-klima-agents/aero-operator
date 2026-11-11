@@ -50,6 +50,7 @@ interface IVotingEscrowExtra {
 
 abstract contract ForkTest is Test {
     uint256 internal constant MAX_CHECKPOINTS = 500;
+    uint256 internal constant ENTRY_GAS = 3_000_000;
     bytes32 internal constant CLAIMED = keccak256("Claimed(uint256,address,uint256,uint256)");
     bytes32 internal constant CLAIM_FAILED = keccak256("ClaimFailed(uint256,address,uint256,bytes)");
     // The fee Safe's proxy as deployed on Base, and the Safe 1.5.0 singleton it points to.
@@ -165,7 +166,7 @@ abstract contract ForkTest is Test {
         vm.recordLogs();
         vm.prank(keeper);
         uint256 gas = gasleft();
-        factory.claim(recipient, _stake(), feeClaims, incentiveClaims);
+        factory.claim(recipient, _stake(), feeClaims, incentiveClaims, ENTRY_GAS);
         claimGas = gas - gasleft();
         return vm.getRecordedLogs();
     }
@@ -261,6 +262,16 @@ abstract contract ForkTest is Test {
         (bool ok,) = CREATE2_FACTORY.call(bytes.concat(bytes32(uint256(1)), d.initCode()));
 
         assertFalse(ok);
+    }
+
+    function test_claim_revertsUnlessAnEntryCanBeGivenItsGas() public {
+        _setOperator(address(operator));
+        uint256[] memory before = _balances(recipient);
+
+        vm.expectRevert(ImmutableClaimOperator.InsufficientGas.selector);
+        factory.claim{gas: ENTRY_GAS}(recipient, _stake(), feeClaims, incentiveClaims, ENTRY_GAS);
+
+        assertEq(_balances(recipient), before);
     }
 
     function test_claim_paysInFullLessTheFee() public {
@@ -397,7 +408,7 @@ contract BaseForkTest is ForkTest {
         uint256[] memory before = _balances(recipient);
 
         vm.expectRevert(ImmutableClaimOperator.NotOwner.selector);
-        factory.claim(recipient, _stake(), feeClaims, incentiveClaims);
+        factory.claim(recipient, _stake(), feeClaims, incentiveClaims, ENTRY_GAS);
         assertEq(_balances(recipient), before);
 
         vm.expectRevert(bytes4(keccak256("NotAuthorized()")));
@@ -408,7 +419,7 @@ contract BaseForkTest is ForkTest {
         vm.prank(buyer);
         VOTER.setOperator(_stake(), block.chainid, buyerOperator, 0, buyer);
         uint256 native = buyer.balance;
-        factory.claim(buyer, _stake(), feeClaims, incentiveClaims);
+        factory.claim(buyer, _stake(), feeClaims, incentiveClaims, ENTRY_GAS);
         assertGt(buyer.balance, native);
         assertEq(_balances(recipient), before);
     }

@@ -68,6 +68,7 @@ contract Simulation {
         uint256 tokenId,
         address recipient,
         uint256 limit,
+        uint256 entryGas,
         uint256[] calldata expected
     ) external returns (uint256 entries, uint256 gas, address[] memory tokens, uint256[] memory paid) {
         ImmutableClaimOperatorFactory factory = _factory(dep);
@@ -78,7 +79,7 @@ contract Simulation {
         uint256[] memory feesBefore = _balances(tokens, dep.feeRecipient);
 
         gas = gasleft();
-        factory.claim(recipient, tokenId, claims.fees, claims.incentives);
+        factory.claim(recipient, tokenId, claims.fees, claims.incentives, entryGas);
         gas -= gasleft();
 
         paid = _gained(tokens, recipient, before);

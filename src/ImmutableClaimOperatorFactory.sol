@@ -18,7 +18,8 @@ contract ImmutableClaimOperatorFactory {
         address recipient,
         uint256 tokenId,
         ILeafVoter.FeeClaim[] calldata feeClaims,
-        ILeafVoter.IncentiveClaim[] calldata incentiveClaims
+        ILeafVoter.IncentiveClaim[] calldata incentiveClaims,
+        uint256 entryGas
     ) external {
         bytes memory initCode = _initCode(recipient);
         address operator = _predict(initCode);
@@ -29,7 +30,7 @@ contract ImmutableClaimOperatorFactory {
             }
             if (deployed != operator) revert DeployFailed();
         }
-        ImmutableClaimOperator(payable(operator)).claim(tokenId, feeClaims, incentiveClaims);
+        ImmutableClaimOperator(payable(operator)).claim(tokenId, feeClaims, incentiveClaims, entryGas);
     }
 
     function operatorOf(address recipient) external view returns (address) {

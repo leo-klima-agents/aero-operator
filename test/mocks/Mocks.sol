@@ -7,7 +7,8 @@ contract MockToken {
     enum Mode {
         Standard,
         NoReturn,
-        ReturnsFalse
+        ReturnsFalse,
+        BurnsGas
     }
 
     Mode public mode;
@@ -28,6 +29,11 @@ contract MockToken {
 
     function transfer(address to, uint256 amount) external {
         require(!blocked[to], "blocked");
+        if (mode == Mode.BurnsGas) {
+            assembly ("memory-safe") {
+                invalid()
+            }
+        }
         bool ok = mode != Mode.ReturnsFalse;
         if (ok) {
             balanceOf[msg.sender] -= amount;
@@ -169,6 +175,15 @@ contract MockLeafVoter {
             if (MockFactoryRegistry(FACTORY_REGISTRY).rewardsToGauge(manager) == address(0)) continue;
             MockRewardsManager(payable(manager))
                 .claimIncentives(tokenId, recipient, incentiveClaims[i].programId, incentiveClaims[i].maxCheckpoints);
+        }
+    }
+}
+
+// A rewards manager whose every answer is a revert of 100,000 bytes.
+contract MockBomb {
+    fallback() external {
+        assembly ("memory-safe") {
+            revert(0, 100000)
         }
     }
 }

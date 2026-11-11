@@ -3,13 +3,14 @@
 # it against the same claim sent by Aero's own route. Nothing is sent. It covers the tokens that Foundry's fork cannot
 # run, such as Base's native tokens and Arc's USDC.
 #
-# usage: script/simulate.sh <rpc-url> <token-id> [max-gauges]
+# usage: script/simulate.sh <rpc-url> <token-id> [max-gauges] [entry-gas]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-RPC=${1:?usage: script/simulate.sh <rpc-url> <token-id> [max-gauges]}
-ID=${2:?usage: script/simulate.sh <rpc-url> <token-id> [max-gauges]}
+RPC=${1:?usage: script/simulate.sh <rpc-url> <token-id> [max-gauges] [entry-gas]}
+ID=${2:?usage: script/simulate.sh <rpc-url> <token-id> [max-gauges] [entry-gas]}
 LIMIT=${3:-0}
+ENTRY_GAS=${4:-3000000}
 
 HASHES=verification/bytecode-hashes.json
 ARTIFACT=out/Simulation.sol/Simulation.json
@@ -58,6 +59,6 @@ echo "chain $CHAIN, block $BLOCK, stake $ID, recipient $RECIPIENT, clone $operat
 direct=$(call "direct($DEP_TYPE,uint256,address,uint256)(uint256[])" "$DEP" "$ID" "$RECIPIENT" "$LIMIT" \
   --override-state-diff "$(as_operator "$SIM")" --json | jq -c '.[0]' | tr -d '"')
 echo "Aero's own route pays: $direct"
-call "claim($DEP_TYPE,uint256,address,uint256,uint256[])(uint256,uint256,address[],uint256[])" \
-  "$DEP" "$ID" "$RECIPIENT" "$LIMIT" "$direct" --override-state-diff "$(as_operator "$operator")"
+call "claim($DEP_TYPE,uint256,address,uint256,uint256,uint256[])(uint256,uint256,address[],uint256[])" \
+  "$DEP" "$ID" "$RECIPIENT" "$LIMIT" "$ENTRY_GAS" "$direct" --override-state-diff "$(as_operator "$operator")"
 echo "the clone paid the same, less the fee, and kept nothing"
