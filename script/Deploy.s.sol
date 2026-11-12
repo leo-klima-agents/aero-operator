@@ -34,8 +34,10 @@ contract Deploy is Script {
 
     function run() external returns (address deployed) {
         require(CREATE2_FACTORY.code.length != 0, "CREATE2 deployer not present");
-        // Reverts where the fee Safe is missing.
-        new ImmutableClaimOperator(LEAF_VOTER, ESCROW, BASE_CHAIN_ID, FEE_RECIPIENT);
+        try new ImmutableClaimOperator(LEAF_VOTER, ESCROW, BASE_CHAIN_ID, FEE_RECIPIENT) {}
+        catch {
+            revert("fee Safe not present");
+        }
         deployed = predict();
         console.log("ImmutableClaimOperatorFactory", deployed);
         console.log("ImmutableClaimOperator", predictImplementation());

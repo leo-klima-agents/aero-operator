@@ -24,27 +24,24 @@ interface IVotingRewardsManagerViews {
 library Discovery {
     uint256 internal constant MAX_CHECKPOINTS = 500;
     uint256 internal constant MAX_PROGRAMS = 64;
+    address internal constant NATIVE = address(0);
 
-    // Where managers pay native tokens, `tokens` ends with the zero address, for those.
-    // `unread` counts the programs that are too old to read or whose estimate reverts.
     struct Claims {
         ILeafVoter.FeeClaim[] fees;
         ILeafVoter.IncentiveClaim[] incentives;
         address[] tokens;
         address wrappedNative;
-        uint256 unread;
+        uint256 unreadPrograms;
     }
 
-    // What the stake's gauges owe it, the first `limit` gauges if not 0.
-    // `forkable` leaves out what pays a token that a fork cannot run.
-    function claims(address leafVoter, uint256 tokenId, uint256 limit, bool forkable)
+    function claims(address leafVoter, uint256 tokenId, uint256 maxGauges, bool onlyWhatAForkRuns)
         internal
         view
         returns (Claims memory found)
     {
         address registry = ILeafVoter(leafVoter).FACTORY_REGISTRY();
         address[] memory gauges = ILeafVoterViews(leafVoter).allocatedGauges(tokenId);
-        uint256 n = limit != 0 && limit < gauges.length ? limit : gauges.length;
+        uint256 n = maxGauges != 0 && maxGauges < gauges.length ? maxGauges : gauges.length;
         ILeafVoter.FeeClaim[] memory fees = new ILeafVoter.FeeClaim[](n);
         ILeafVoter.IncentiveClaim[] memory incentives = new ILeafVoter.IncentiveClaim[](MAX_PROGRAMS * n);
         address[] memory tokens = new address[]((MAX_PROGRAMS + 2) * n + 1);
@@ -55,7 +52,7 @@ library Discovery {
             IVotingRewardsManager manager =
                 IVotingRewardsManager(IFactoryRegistryViews(registry).gaugeToRewards(gauges[i]));
             (address token0, address token1) = (manager.token0(), manager.token1());
-            if (forkable && !(_forkable(token0) && _forkable(token1))) continue;
+            if (onlyWhatAForkRuns && !(_runsInAFork(token0) && _runsInAFork(token1))) continue;
             address native = manager.wrappedNative();
             if (managers == 0) found.wrappedNative = native;
             require(native == found.wrappedNative, "rewards managers differ on the wrapped native token");
@@ -65,21 +62,21 @@ library Discovery {
 
             IVotingRewardsManagerViews views = IVotingRewardsManagerViews(address(manager));
             uint256 last = views.incentiveCount();
-            if (last > MAX_PROGRAMS) found.unread += last - MAX_PROGRAMS;
+            if (last > MAX_PROGRAMS) found.unreadPrograms += last - MAX_PROGRAMS;
             for (uint256 id = last > MAX_PROGRAMS ? last - MAX_PROGRAMS + 1 : 1; id <= last; ++id) {
                 try views.earnedIncentives(tokenId, id, MAX_CHECKPOINTS) returns (uint256 earned) {
                     if (earned == 0) continue;
                 } catch {
-                    ++found.unread;
+                    ++found.unreadPrograms;
                     continue;
                 }
                 address token = manager.incentive(id);
-                if (forkable && !_forkable(token)) continue;
+                if (onlyWhatAForkRuns && !_runsInAFork(token)) continue;
                 incentives[programs++] = ILeafVoter.IncentiveClaim(address(manager), id, MAX_CHECKPOINTS);
                 count = _track(tokens, count, token, native);
             }
         }
-        if (found.wrappedNative != address(0)) ++count;
+        if (found.wrappedNative != address(0)) tokens[count++] = NATIVE;
         assembly ("memory-safe") {
             mstore(fees, managers)
             mstore(incentives, programs)
@@ -91,7 +88,7 @@ library Discovery {
     }
 
     function balance(address token, address account) internal view returns (uint256) {
-        return token == address(0) ? account.balance : IERC20(token).balanceOf(account);
+        return token == NATIVE ? account.balance : IERC20(token).balanceOf(account);
     }
 
     function balances(address[] memory tokens, address account) internal view returns (uint256[] memory held) {
@@ -112,7 +109,7 @@ library Discovery {
         }
     }
 
-    function _forkable(address token) private view returns (bool) {
+    function _runsInAFork(address token) private view returns (bool) {
         return keccak256(token.code) != keccak256(hex"ef");
     }
 

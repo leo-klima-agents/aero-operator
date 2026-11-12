@@ -37,6 +37,7 @@ interface IVotingEscrowExtra {
 
 abstract contract ForkTest is Test {
     uint256 internal constant ENTRY_GAS = 1_000_000;
+    bytes internal constant FEE_SAFE_STAND_IN = hex"00";
     bytes32 internal constant CLAIMED = keccak256("Claimed(uint256,address,uint256,uint256)");
     bytes32 internal constant CLAIM_FAILED = keccak256("ClaimFailed(uint256,address,bool,uint256)");
 
@@ -70,8 +71,7 @@ abstract contract ForkTest is Test {
         d = new Deploy();
         leaf = ILeafVoterExtra(d.LEAF_VOTER());
         feeRecipient = d.FEE_RECIPIENT();
-        // Stands in for the fee Safe where it is missing.
-        if (feeRecipient.code.length == 0) vm.etch(feeRecipient, hex"00");
+        if (feeRecipient.code.length == 0) vm.etch(feeRecipient, FEE_SAFE_STAND_IN);
         factory = ImmutableClaimOperatorFactory(d.run());
         recipient = _recipient();
         operator = ImmutableClaimOperator(payable(factory.operatorOf(recipient)));
@@ -81,7 +81,7 @@ abstract contract ForkTest is Test {
     function _discover() internal {
         Discovery.Claims memory claims = Discovery.claims(address(leaf), _stake(), 0, true);
         assertGt(claims.fees.length, 0, "the stake has nothing to claim on this chain at this block");
-        assertEq(claims.unread, 0, "some incentive programs could not be read");
+        assertEq(claims.unreadPrograms, 0, "some incentive programs could not be read");
         for (uint256 i; i < claims.fees.length; ++i) {
             feeClaims.push(claims.fees[i]);
         }
@@ -380,9 +380,9 @@ contract EthereumForkTest is ForkTest {
         return makeAddr("recipient");
     }
 
-    // As the Voter's message from Base does.
     function _setOperator(address account) internal override {
-        vm.prank(leaf.ORCHESTRATOR());
+        address bridgeFromBase = leaf.ORCHESTRATOR();
+        vm.prank(bridgeFromBase);
         leaf.setOperator(_stake(), account);
     }
 

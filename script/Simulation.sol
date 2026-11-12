@@ -5,7 +5,6 @@ import {ImmutableClaimOperatorFactory} from "../src/ImmutableClaimOperatorFactor
 import {ILeafVoter} from "../src/interfaces/ILeafVoter.sol";
 import {Discovery} from "./Discovery.sol";
 
-// Runs in an eth_call, at an address given by a state override. See simulate.sh.
 contract Simulation {
     enum Outcome {
         Reverted,
@@ -27,42 +26,40 @@ contract Simulation {
         return _factory(dep).operatorOf(recipient);
     }
 
-    // What Aero's own route pays, with this contract as the stake's operator.
-    function direct(address leafVoter, uint256 tokenId, address recipient, uint256 limit)
+    function claimAsOperator(address leafVoter, uint256 tokenId, address recipient, uint256 maxGauges)
         external
         returns (uint256[] memory)
     {
-        Discovery.Claims memory claims = Discovery.claims(leafVoter, tokenId, limit, false);
+        Discovery.Claims memory claims = Discovery.claims(leafVoter, tokenId, maxGauges, false);
         uint256[] memory before = Discovery.balances(claims.tokens, recipient);
         ILeafVoter(leafVoter).claimRewards(tokenId, recipient, claims.fees, claims.incentives);
         return Discovery.gained(claims.tokens, recipient, before);
     }
 
-    // The same claim through the clone, as the stake's operator, in calls of `chunk` entries with `gas` each.
-    function attempt(
+    function claimThroughClone(
         Deployment calldata dep,
         uint256 tokenId,
         address recipient,
-        uint256 limit,
+        uint256 maxGauges,
         uint256 entryGas,
-        uint256 chunk,
-        uint256 gas,
-        uint256[] calldata expected
-    ) external returns (Outcome outcome, uint256 entries, uint256 calls, uint256 mostGas, uint256 unread) {
+        uint256 entriesPerCall,
+        uint256 gasPerCall,
+        uint256[] calldata paidByAero
+    ) external returns (Outcome outcome, uint256 entries, uint256 calls, uint256 mostGas, uint256 unreadPrograms) {
         ImmutableClaimOperatorFactory factory = _factory(dep);
-        Discovery.Claims memory claims = Discovery.claims(dep.leafVoter, tokenId, limit, false);
+        Discovery.Claims memory claims = Discovery.claims(dep.leafVoter, tokenId, maxGauges, false);
         entries = claims.fees.length + claims.incentives.length;
-        unread = claims.unread;
+        unreadPrograms = claims.unreadPrograms;
         uint256[] memory before = Discovery.balances(claims.tokens, recipient);
         uint256[] memory feesBefore = Discovery.balances(claims.tokens, dep.feeRecipient);
 
-        for (uint256 from; from < entries; from += chunk) {
+        for (uint256 from; from < entries; from += entriesPerCall) {
             (ILeafVoter.FeeClaim[] memory fees, ILeafVoter.IncentiveClaim[] memory incentives) =
-                _slice(claims, from, chunk);
+                _feesThenIncentives(claims, from, entriesPerCall);
             uint256 used = gasleft();
-            try factory.claim{gas: gas}(recipient, tokenId, fees, incentives, entryGas) {}
+            try factory.claim{gas: gasPerCall}(recipient, tokenId, fees, incentives, entryGas) {}
             catch {
-                return (Outcome.Reverted, entries, calls, mostGas, unread);
+                return (Outcome.Reverted, entries, calls, mostGas, unreadPrograms);
             }
             used -= gasleft();
             if (used > mostGas) mostGas = used;
@@ -74,12 +71,11 @@ contract Simulation {
         address[3] memory ours = [factory.operatorOf(recipient), address(factory), factory.implementation()];
         bool inFull = true;
         bool nothing = true;
-        for (uint256 i; i < expected.length; ++i) {
-            // The fee is 1% of each payment, rounded down.
-            if (
-                paid[i] + taken[i] != expected[i] || taken[i] > expected[i] / 100
-                    || taken[i] + 2 * entries < expected[i] / 100
-            ) inFull = false;
+        uint256 maxRounding = 2 * entries;
+        for (uint256 i; i < paidByAero.length; ++i) {
+            uint256 onePercent = paidByAero[i] / 100;
+            bool feeIsOnePercentRoundedDown = taken[i] <= onePercent && taken[i] + maxRounding >= onePercent;
+            if (paid[i] + taken[i] != paidByAero[i] || !feeIsOnePercentRoundedDown) inFull = false;
             if (paid[i] + taken[i] != 0) nothing = false;
             for (uint256 j; j < ours.length; ++j) {
                 uint256 left = Discovery.balance(claims.tokens[i], ours[j]);
@@ -93,14 +89,13 @@ contract Simulation {
         return new ImmutableClaimOperatorFactory(dep.leafVoter, dep.escrow, dep.baseChainId, dep.feeRecipient);
     }
 
-    // Entries `from` to `from + chunk`, fees first.
-    function _slice(Discovery.Claims memory claims, uint256 from, uint256 chunk)
+    function _feesThenIncentives(Discovery.Claims memory claims, uint256 from, uint256 count)
         private
         pure
         returns (ILeafVoter.FeeClaim[] memory fees, ILeafVoter.IncentiveClaim[] memory incentives)
     {
         uint256 feeCount = claims.fees.length;
-        uint256 to = from + chunk;
+        uint256 to = from + count;
         if (to > feeCount + claims.incentives.length) to = feeCount + claims.incentives.length;
         uint256 feeEnd = to < feeCount ? to : feeCount;
         fees = new ILeafVoter.FeeClaim[](from < feeEnd ? feeEnd - from : 0);

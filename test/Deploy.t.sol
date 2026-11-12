@@ -52,7 +52,7 @@ contract DeployTest is Test {
 
     function test_run_failsWithoutTheFeeRecipient() public {
         vm.etch(d.FEE_RECIPIENT(), "");
-        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.NoCode.selector, d.FEE_RECIPIENT()));
+        vm.expectRevert(bytes("fee Safe not present"));
         d.run();
     }
 }
