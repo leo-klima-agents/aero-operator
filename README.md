@@ -79,8 +79,8 @@ Neither contract has an owner, settings or an upgrade path:
   fee.
 - An operator set before a sale stays set. On Base, a buyer's own clone set by the seller works once the buyer owns
   the stake.
-- A stake has one operator per chain, and only the operator can change its allocation there. A clone can't, so the
-  owner sets another operator to reallocate.
+- A stake has one operator per chain. Aero's local `allocateGauges` is for the operator only and a clone can't call
+  it. It is off on all eight chains, and the owner allocates from Base either way.
 
 ## Deployment
 
