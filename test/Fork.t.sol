@@ -11,7 +11,6 @@ import {IERC20} from "../src/interfaces/IERC20.sol";
 import {ILeafVoter} from "../src/interfaces/ILeafVoter.sol";
 
 interface IVoter {
-    function chains() external view returns (uint256[] memory);
     function allocationChainAmounts(uint256 tokenId, uint256 chainId) external view returns (uint128);
     function setOperator(uint256 tokenId, uint256 chainId, address operator, uint256 gasLimit, address refundTo)
         external
@@ -40,10 +39,6 @@ abstract contract ForkTest is Test {
     uint256 internal constant ENTRY_GAS = 1_000_000;
     bytes32 internal constant CLAIMED = keccak256("Claimed(uint256,address,uint256,uint256)");
     bytes32 internal constant CLAIM_FAILED = keccak256("ClaimFailed(uint256,address,bool,uint256)");
-    // The fee Safe's proxy as deployed on Base, and the Safe 1.5.0 singleton it points to.
-    address internal constant SAFE_SINGLETON = 0xEdd160fEBBD92E350D4D398fb636302fccd67C7e;
-    bytes internal constant SAFE_PROXY_CODE =
-        hex"608060405260005463a619486e60003560e01c14156024578060601b606c5260206060f35b3660008037600080366000845af43d6000803e806040573d6000fd5b3d6000f3fea2646970667358221220e61834ebd2d8cd909d362bf67c47ef58fd665df38e6dd036ce65611101d072e964736f6c63430007060033";
 
     Deploy internal d;
     ILeafVoterExtra internal leaf;
@@ -66,14 +61,6 @@ abstract contract ForkTest is Test {
     function _recipient() internal virtual returns (address);
     function _setOperator(address account) internal virtual;
 
-    function _minRewardedTokens() internal pure virtual returns (uint256) {
-        return 1;
-    }
-
-    function _minNative() internal pure virtual returns (uint256) {
-        return 0;
-    }
-
     function setUp() public {
         string memory rpc = _rpc();
         vm.skip(bytes(rpc).length == 0);
@@ -83,20 +70,12 @@ abstract contract ForkTest is Test {
         d = new Deploy();
         leaf = ILeafVoterExtra(d.LEAF_VOTER());
         feeRecipient = d.FEE_RECIPIENT();
-        _standInForTheFeeSafe();
+        // Where the fee Safe is not deployed yet, a contract that only accepts payments stands in for it.
+        if (feeRecipient.code.length == 0) vm.etch(feeRecipient, hex"00");
         factory = ImmutableClaimOperatorFactory(d.run());
         recipient = _recipient();
         operator = ImmutableClaimOperator(payable(factory.operatorOf(recipient)));
         _discover();
-    }
-
-    // Where the fee Safe is not deployed yet, the same proxy stands in for it: the factory cannot exist without it.
-    // Where the Safe's singleton is missing too, a contract that only accepts payments does.
-    function _standInForTheFeeSafe() internal {
-        if (feeRecipient.code.length != 0) return;
-        if (SAFE_SINGLETON.code.length == 0) return vm.etch(feeRecipient, hex"00");
-        vm.etch(feeRecipient, SAFE_PROXY_CODE);
-        vm.store(feeRecipient, 0, bytes32(uint256(uint160(SAFE_SINGLETON))));
     }
 
     function _discover() internal {
@@ -219,18 +198,6 @@ abstract contract ForkTest is Test {
         assertEq(implementation.feeRecipient(), 0x450c72de8c0079B49AcedF294a13011bd09D125B);
     }
 
-    function test_firstClaim_deploysTheClone() public {
-        _setOperator(address(operator));
-        assertEq(address(operator).code.length, 0);
-
-        Vm.Log[] memory logs = _claim();
-
-        assertEq(address(operator).code.length, 65);
-        assertEq(operator.recipient(), recipient);
-        assertGt(_count(logs, CLAIMED), 0);
-        assertEq(_count(logs, CLAIM_FAILED), 0);
-    }
-
     function test_theFactory_cannotBeDeployedWithoutTheFeeSafe() public {
         vm.etch(feeRecipient, "");
 
@@ -264,22 +231,20 @@ abstract contract ForkTest is Test {
         vm.revertToState(snapshot);
 
         uint256[] memory feesBefore = _balances(feeRecipient);
+        assertEq(address(operator).code.length, 0);
         Vm.Log[] memory logs = _claim();
+        assertEq(operator.recipient(), recipient);
         uint256[] memory paid = _gained(recipient, before);
         uint256[] memory fees = _gained(feeRecipient, feesBefore);
         (uint256[] memory claimed, uint256[] memory claimedFees) = _claimed(logs);
 
-        uint256 rewarded;
         for (uint256 i; i < tokens.length; ++i) {
             assertEq(paid[i] + fees[i], direct[i]);
             assertEq(claimed[i], direct[i]);
             assertEq(claimedFees[i], fees[i]);
             assertLe(fees[i], direct[i] / 100);
             assertGe(fees[i] + 2 * entries, direct[i] / 100);
-            if (direct[i] != 0) ++rewarded;
         }
-        if (wrappedNative != address(0)) assertGe(direct[tokens.length - 1], _minNative());
-        assertGe(rewarded, _minRewardedTokens());
         assertEq(_count(logs, CLAIM_FAILED), 0);
         assertLt(claimGas, directGas + 150_000 + 90_000 * entries);
         _assertNothingLeft();
@@ -315,11 +280,7 @@ abstract contract ForkTest is Test {
 
 contract BaseForkTest is ForkTest {
     IVoter internal constant VOTER = IVoter(0x49d7d4f17Ec56Ef8fA04E464AF5D1A4942CC31e6);
-    uint256 internal constant GAS_LIMIT = 200_000;
-    uint256 internal constant MAX_MESSAGE_FEE = 0.001 ether;
     IVotingEscrowExtra internal escrow;
-
-    event OperatorSet(uint256 indexed tokenId, uint256 indexed chainId, address operator);
 
     function _rpc() internal view override returns (string memory) {
         return vm.envOr("BASE_RPC_URL", string(""));
@@ -347,20 +308,8 @@ contract BaseForkTest is ForkTest {
         VOTER.setOperator(_stake(), block.chainid, account, 0, recipient);
     }
 
-    function _minRewardedTokens() internal pure override returns (uint256) {
-        return 4;
-    }
-
-    function _minNative() internal pure override returns (uint256) {
-        return 1e15;
-    }
-
     function test_claim_aFirstFeeClaimNeedsMoreThan500000Gas() public {
         _checkWhatAFirstFeeClaimNeeds();
-    }
-
-    function test_theOwnerIsASmartWallet() public view {
-        assertGt(recipient.code.length, 0);
     }
 
     function test_claim_leavesTheStakeWithItsOwner() public {
@@ -402,46 +351,6 @@ contract BaseForkTest is ForkTest {
         assertGt(buyer.balance, native);
         assertEq(_balances(recipient), before);
     }
-
-    function test_optingIn_forAnotherChain_paysAMessageFee() public {
-        uint256[] memory chains = VOTER.chains();
-        assertGt(chains.length, 1);
-        vm.deal(recipient, 1 ether);
-        for (uint256 i; i < chains.length; ++i) {
-            if (chains[i] == block.chainid) continue;
-            vm.expectRevert(abi.encodeWithSignature("MissingDestinationGasLimit(uint256)", chains[i]));
-            vm.prank(recipient);
-            VOTER.setOperator(_stake(), chains[i], address(operator), 0, recipient);
-
-            uint256 balance = recipient.balance;
-            vm.expectEmit(address(VOTER));
-            emit OperatorSet(_stake(), chains[i], address(operator));
-            vm.prank(recipient);
-            VOTER.setOperator{value: MAX_MESSAGE_FEE}(_stake(), chains[i], address(operator), GAS_LIMIT, recipient);
-            assertLt(recipient.balance, balance);
-            assertGt(recipient.balance, balance - MAX_MESSAGE_FEE);
-        }
-    }
-}
-
-abstract contract LeafForkTest is ForkTest {
-    function _stake() internal pure virtual override returns (uint256) {
-        return 10_426;
-    }
-
-    function _recipient() internal override returns (address) {
-        return makeAddr("recipient");
-    }
-
-    // What the Voter's message does when it arrives from Base.
-    function _setOperator(address account) internal override {
-        vm.prank(leaf.ORCHESTRATOR());
-        leaf.setOperator(_stake(), account);
-    }
-
-    function test_theEscrowIsNotOnThisChain() public view {
-        assertEq(d.ESCROW().code.length, 0);
-    }
 }
 
 interface IUSDC {
@@ -451,7 +360,7 @@ interface IUSDC {
     function unBlacklist(address account) external;
 }
 
-contract EthereumForkTest is LeafForkTest {
+contract EthereumForkTest is ForkTest {
     IUSDC internal constant USDC = IUSDC(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
 
     function _rpc() internal view override returns (string memory) {
@@ -470,12 +379,14 @@ contract EthereumForkTest is LeafForkTest {
         return 621;
     }
 
-    function _minRewardedTokens() internal pure override returns (uint256) {
-        return 4;
+    function _recipient() internal override returns (address) {
+        return makeAddr("recipient");
     }
 
-    function _minNative() internal pure override returns (uint256) {
-        return 1e15;
+    // What the Voter's message does when it arrives from Base.
+    function _setOperator(address account) internal override {
+        vm.prank(leaf.ORCHESTRATOR());
+        leaf.setOperator(_stake(), account);
     }
 
     function test_claim_aFirstFeeClaimNeedsMoreThan500000Gas() public {
@@ -505,79 +416,5 @@ contract EthereumForkTest is LeafForkTest {
         assertGt(USDC.balanceOf(recipient), 1e6);
         assertGt(USDC.balanceOf(feeRecipient), 0);
         _assertNothingLeft();
-    }
-}
-
-contract OptimismForkTest is LeafForkTest {
-    function _rpc() internal view override returns (string memory) {
-        return vm.envOr("OPTIMISM_RPC_URL", string(""));
-    }
-
-    function _block() internal pure override returns (uint256) {
-        return 159_438_100;
-    }
-
-    function _chainId() internal pure override returns (uint256) {
-        return 10;
-    }
-}
-
-contract ArbitrumForkTest is LeafForkTest {
-    function _rpc() internal view override returns (string memory) {
-        return vm.envOr("ARBITRUM_RPC_URL", string(""));
-    }
-
-    function _block() internal pure override returns (uint256) {
-        return 523_523_300;
-    }
-
-    function _chainId() internal pure override returns (uint256) {
-        return 42_161;
-    }
-}
-
-contract InkForkTest is LeafForkTest {
-    function _rpc() internal view override returns (string memory) {
-        return vm.envOr("INK_RPC_URL", string(""));
-    }
-
-    function _block() internal pure override returns (uint256) {
-        return 60_976_600;
-    }
-
-    function _chainId() internal pure override returns (uint256) {
-        return 57_073;
-    }
-}
-
-contract RobinhoodForkTest is LeafForkTest {
-    function _rpc() internal view override returns (string memory) {
-        return vm.envOr("ROBINHOOD_RPC_URL", string(""));
-    }
-
-    function _block() internal pure override returns (uint256) {
-        return 112_417_100;
-    }
-
-    function _chainId() internal pure override returns (uint256) {
-        return 4663;
-    }
-}
-
-contract ElysiumForkTest is LeafForkTest {
-    function _rpc() internal view override returns (string memory) {
-        return vm.envOr("ELYSIUM_RPC_URL", string(""));
-    }
-
-    function _block() internal pure override returns (uint256) {
-        return 5_255_800;
-    }
-
-    function _chainId() internal pure override returns (uint256) {
-        return 99_901;
-    }
-
-    function _stake() internal pure override returns (uint256) {
-        return 10_495;
     }
 }

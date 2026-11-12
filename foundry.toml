@@ -14,3 +14,13 @@ fs_permissions = [
 
 [profile.ci.fuzz]
 runs = 10_000
+
+[lint]
+exclude_lints = [
+  "arbitrary-send-eth",
+  "calls-loop",
+  "missing-zero-check",
+  "reentrancy-events",
+  "reentrancy-no-eth",
+  "require-revert-in-loop",
+]

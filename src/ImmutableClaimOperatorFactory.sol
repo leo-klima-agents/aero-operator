@@ -7,9 +7,6 @@ import {ILeafVoter} from "./interfaces/ILeafVoter.sol";
 contract ImmutableClaimOperatorFactory {
     address public immutable implementation;
 
-    error DeployFailed();
-
-    // forge-lint: disable-next-line(missing-zero-check)
     constructor(address leafVoter, address escrow, uint256 baseChainId, address feeRecipient) {
         implementation = address(new ImmutableClaimOperator(leafVoter, escrow, baseChainId, feeRecipient));
     }
@@ -24,11 +21,9 @@ contract ImmutableClaimOperatorFactory {
         bytes memory initCode = _initCode(recipient);
         address operator = _predict(initCode);
         if (operator.code.length == 0) {
-            address deployed;
             assembly ("memory-safe") {
-                deployed := create2(0, add(initCode, 0x20), mload(initCode), 0)
+                pop(create2(0, add(initCode, 0x20), mload(initCode), 0))
             }
-            if (deployed != operator) revert DeployFailed();
         }
         ImmutableClaimOperator(payable(operator)).claim(tokenId, feeClaims, incentiveClaims, entryGas);
     }

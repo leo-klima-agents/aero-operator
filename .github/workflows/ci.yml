@@ -41,11 +41,6 @@ jobs:
     env:
       BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
       ETHEREUM_RPC_URL: ${{ secrets.ETHEREUM_RPC_URL }}
-      OPTIMISM_RPC_URL: ${{ secrets.OPTIMISM_RPC_URL }}
-      ARBITRUM_RPC_URL: ${{ secrets.ARBITRUM_RPC_URL }}
-      INK_RPC_URL: ${{ secrets.INK_RPC_URL }}
-      ROBINHOOD_RPC_URL: ${{ secrets.ROBINHOOD_RPC_URL }}
-      ELYSIUM_RPC_URL: ${{ secrets.ELYSIUM_RPC_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -53,7 +48,7 @@ jobs:
           persist-credentials: false
       - name: which chains have an RPC secret
         run: |
-          for name in BASE ETHEREUM OPTIMISM ARBITRUM INK ROBINHOOD ELYSIUM; do
+          for name in BASE ETHEREUM; do
             variable="${name}_RPC_URL"
             [ -n "${!variable}" ] || echo "::warning::$variable secret not set; that chain's fork tests are skipped"
           done

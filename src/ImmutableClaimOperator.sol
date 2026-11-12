@@ -24,7 +24,6 @@ contract ImmutableClaimOperator {
 
     error NoCode(address account);
     error NotClone();
-    error NotClaiming();
     error InsufficientGas();
     error Reentrancy();
     error NotOwner();
@@ -44,20 +43,15 @@ contract ImmutableClaimOperator {
         _;
     }
 
-    // forge-lint: disable-next-line(missing-zero-check)
     constructor(address leafVoter_, address escrow_, uint256 baseChainId_, address feeRecipient_) {
-        if (leafVoter_.code.length == 0) revert NoCode(leafVoter_);
         if (feeRecipient_.code.length == 0) revert NoCode(feeRecipient_);
-        if (block.chainid == baseChainId_ && escrow_.code.length == 0) revert NoCode(escrow_);
         leafVoter = leafVoter_;
         escrow = escrow_;
         baseChainId = baseChainId_;
         feeRecipient = feeRecipient_;
     }
 
-    receive() external payable {
-        if (!locked) revert NotClaiming();
-    }
+    receive() external payable {}
 
     function recipient() public view returns (address) {
         if (address(this).code.length != CLONE_SIZE) revert NotClone();
@@ -93,8 +87,6 @@ contract ImmutableClaimOperator {
         uint256 programId,
         uint256 maxCheckpoints
     ) external onlySelf {
-        // Already so in a claim. Lets an entry be simulated alone, in a call from the clone's own address.
-        locked = true;
         address registry = ILeafVoter(leafVoter).FACTORY_REGISTRY();
         if (IFactoryRegistry(registry).rewardsToGauge(votingRewardsManager) == address(0)) {
             revert NotRegistered(votingRewardsManager);
@@ -112,9 +104,7 @@ contract ImmutableClaimOperator {
             _forward(tokenId, account, manager.token0(), native);
             _forward(tokenId, account, manager.token1(), native);
         } else {
-            // forge-lint: disable-next-line(unused-return)
-            (address token,,,,,) = manager.incentive(programId);
-            _forward(tokenId, account, token, native);
+            _forward(tokenId, account, manager.incentive(programId), native);
         }
     }
 
@@ -129,12 +119,9 @@ contract ImmutableClaimOperator {
     ) private {
         uint256 passable = gasleft();
         passable = passable > RESERVED_GAS ? passable - RESERVED_GAS : 0;
-        // forge-lint: disable-next-line(require-revert-in-loop)
         if (passable - passable / 64 < entryGas) revert InsufficientGas();
-        // forge-lint: disable-next-line(calls-loop, reentrancy-no-eth)
         try this.claimEntry{gas: entryGas}(tokenId, votingRewardsManager, fees, programId, maxCheckpoints) {}
         catch {
-            // forge-lint: disable-next-line(reentrancy-events)
             emit ClaimFailed(tokenId, votingRewardsManager, fees, programId);
         }
     }
@@ -147,14 +134,12 @@ contract ImmutableClaimOperator {
         uint256 fee = amount * FEE_BPS / 10_000;
         if (fee != 0) _send(token, isNative, feeRecipient, fee);
         _send(token, isNative, account, amount - fee);
-        // forge-lint: disable-next-line(reentrancy-events)
         emit Claimed(tokenId, token, amount, fee);
     }
 
     function _send(address token, bool isNative, address to, uint256 amount) private {
         bool ok;
         if (isNative) {
-            // forge-lint: disable-next-line(arbitrary-send-eth)
             (ok,) = to.call{value: amount}("");
         } else {
             bytes memory ret;

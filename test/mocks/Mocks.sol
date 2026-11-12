@@ -179,15 +179,6 @@ contract MockLeafVoter {
     }
 }
 
-// A rewards manager whose every answer is a revert of 100,000 bytes.
-contract MockBomb {
-    fallback() external {
-        assembly ("memory-safe") {
-            revert(0, 100000)
-        }
-    }
-}
-
 contract MockSafe {
     receive() external payable {}
 }

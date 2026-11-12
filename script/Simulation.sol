@@ -21,12 +21,7 @@ contract Simulation {
         address feeRecipient;
     }
 
-    // What Base and Ethereum allow a transaction.
-    uint256 internal constant TRANSACTION_GAS = 16_777_216;
-
-    error Mismatch(address token, uint256 direct, uint256 recipient, uint256 fee);
     error LeftBehind(address token, address account, uint256 amount);
-    error NothingClaimed();
 
     // The recipient's clone, for the factory this contract deploys first in a call.
     function operatorOf(Deployment calldata dep, address recipient) external returns (address) {
@@ -45,16 +40,17 @@ contract Simulation {
     }
 
     // The same claim through the recipient's clone, as the stake's operator, in calls of `chunk` entries that each
-    // get a transaction's gas, checked against `direct`. `gas` is what the heaviest call used.
-    function claim(
+    // get `gas`, compared with what `direct` paid. `mostGas` is what the heaviest call used.
+    function attempt(
         Deployment calldata dep,
         uint256 tokenId,
         address recipient,
         uint256 limit,
         uint256 entryGas,
         uint256 chunk,
+        uint256 gas,
         uint256[] calldata expected
-    ) external returns (uint256 entries, uint256 calls, uint256 gas, uint256 unread, uint256[] memory paid) {
+    ) external returns (Outcome outcome, uint256 entries, uint256 calls, uint256 mostGas, uint256 unread) {
         ImmutableClaimOperatorFactory factory = _factory(dep);
         Discovery.Claims memory claims = Discovery.claims(dep.leafVoter, tokenId, limit, false);
         entries = claims.fees.length + claims.incentives.length;
@@ -66,56 +62,34 @@ contract Simulation {
             (ILeafVoter.FeeClaim[] memory fees, ILeafVoter.IncentiveClaim[] memory incentives) =
                 _slice(claims, from, chunk);
             uint256 used = gasleft();
-            factory.claim{gas: TRANSACTION_GAS}(recipient, tokenId, fees, incentives, entryGas);
-            used -= gasleft();
-            if (used > gas) gas = used;
-            ++calls;
-        }
-
-        paid = Discovery.gained(claims.tokens, recipient, before);
-        uint256[] memory taken = Discovery.gained(claims.tokens, dep.feeRecipient, feesBefore);
-        _checkNothingLeft(factory, recipient, claims.tokens);
-        uint256 total;
-        for (uint256 i; i < expected.length; ++i) {
-            if (!_inFull(expected[i], paid[i], taken[i], entries)) {
-                revert Mismatch(claims.tokens[i], expected[i], paid[i], taken[i]);
+            try factory.claim{gas: gas}(recipient, tokenId, fees, incentives, entryGas) {}
+            catch {
+                return (Outcome.Reverted, entries, calls, mostGas, unread);
             }
-            total += expected[i];
-        }
-        if (total == 0) revert NothingClaimed();
-    }
-
-    // One claim through the clone with `gas`, to see how this node's gas rules treat it.
-    function attempt(
-        Deployment calldata dep,
-        uint256 tokenId,
-        address recipient,
-        uint256 limit,
-        uint256 entryGas,
-        uint256 gas,
-        uint256[] calldata expected
-    ) external returns (Outcome) {
-        ImmutableClaimOperatorFactory factory = _factory(dep);
-        Discovery.Claims memory claims = Discovery.claims(dep.leafVoter, tokenId, limit, false);
-        uint256 entries = claims.fees.length + claims.incentives.length;
-        uint256[] memory before = Discovery.balances(claims.tokens, recipient);
-        uint256[] memory feesBefore = Discovery.balances(claims.tokens, dep.feeRecipient);
-
-        try factory.claim{gas: gas}(recipient, tokenId, claims.fees, claims.incentives, entryGas) {}
-        catch {
-            return Outcome.Reverted;
+            used -= gasleft();
+            if (used > mostGas) mostGas = used;
+            ++calls;
         }
 
         uint256[] memory paid = Discovery.gained(claims.tokens, recipient, before);
         uint256[] memory taken = Discovery.gained(claims.tokens, dep.feeRecipient, feesBefore);
-        _checkNothingLeft(factory, recipient, claims.tokens);
+        address[3] memory ours = [factory.operatorOf(recipient), address(factory), factory.implementation()];
         bool inFull = true;
         bool nothing = true;
         for (uint256 i; i < expected.length; ++i) {
-            if (!_inFull(expected[i], paid[i], taken[i], entries)) inFull = false;
+            // The recipient and the fee recipient share what Aero's own route pays, the fee being 1% of each
+            // payment, rounded down.
+            if (
+                paid[i] + taken[i] != expected[i] || taken[i] > expected[i] / 100
+                    || taken[i] + 2 * entries < expected[i] / 100
+            ) inFull = false;
             if (paid[i] + taken[i] != 0) nothing = false;
+            for (uint256 j; j < ours.length; ++j) {
+                uint256 left = Discovery.balance(claims.tokens[i], ours[j]);
+                if (left != 0) revert LeftBehind(claims.tokens[i], ours[j], left);
+            }
         }
-        return nothing ? Outcome.PaidNothing : inFull ? Outcome.PaidInFull : Outcome.PaidInPart;
+        outcome = nothing ? Outcome.PaidNothing : inFull ? Outcome.PaidInFull : Outcome.PaidInPart;
     }
 
     function _factory(Deployment calldata dep) private returns (ImmutableClaimOperatorFactory) {
@@ -140,25 +114,6 @@ contract Simulation {
         incentives = new ILeafVoter.IncentiveClaim[](to > feeCount ? to - feeCount - start : 0);
         for (uint256 i; i < incentives.length; ++i) {
             incentives[i] = claims.incentives[start + i];
-        }
-    }
-
-    // The recipient and the fee recipient share what Aero's own route pays, the fee being 1% of each payment,
-    // rounded down.
-    function _inFull(uint256 expected, uint256 paid, uint256 taken, uint256 entries) private pure returns (bool) {
-        return paid + taken == expected && taken <= expected / 100 && taken + 2 * entries >= expected / 100;
-    }
-
-    function _checkNothingLeft(ImmutableClaimOperatorFactory factory, address recipient, address[] memory tokens)
-        private
-        view
-    {
-        address[3] memory ours = [factory.operatorOf(recipient), address(factory), factory.implementation()];
-        for (uint256 i; i < tokens.length; ++i) {
-            for (uint256 j; j < ours.length; ++j) {
-                uint256 left = Discovery.balance(tokens[i], ours[j]);
-                if (left != 0) revert LeftBehind(tokens[i], ours[j], left);
-            }
         }
     }
 }

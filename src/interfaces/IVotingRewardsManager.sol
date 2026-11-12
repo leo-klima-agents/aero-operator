@@ -5,8 +5,5 @@ interface IVotingRewardsManager {
     function token0() external view returns (address);
     function token1() external view returns (address);
     function wrappedNative() external view returns (address);
-    function incentive(uint256 programId)
-        external
-        view
-        returns (address token, uint256 amount, uint256 rate, uint48 start, uint48 end, address creator);
+    function incentive(uint256 programId) external view returns (address token);
 }

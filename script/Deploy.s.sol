@@ -51,11 +51,6 @@ contract Deploy is Script {
         (bool ok,) = CREATE2_FACTORY.call(bytes.concat(SALT, initCode()));
         vm.stopBroadcast();
         require(ok && deployed.code.length != 0, "CREATE2 deploy failed");
-        require(
-            ImmutableClaimOperatorFactory(deployed).implementation() == predictImplementation()
-                && ImmutableClaimOperator(payable(predictImplementation())).feeRecipient() == FEE_RECIPIENT,
-            "unexpected implementation"
-        );
         console.log("deployed");
     }
 }

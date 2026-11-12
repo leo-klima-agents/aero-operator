@@ -76,7 +76,7 @@ library Discovery {
                     ++found.unread;
                     continue;
                 }
-                (address token,,,,,) = manager.incentive(id);
+                address token = manager.incentive(id);
                 if (forkable && !_forkable(token)) continue;
                 incentives[programs++] = ILeafVoter.IncentiveClaim(address(manager), id, MAX_CHECKPOINTS);
                 count = _track(tokens, count, token, native);

@@ -14,9 +14,17 @@ ID=${2:?$USAGE}
 LIMIT=${3:-0}
 ENTRY_GAS=${4:-1000000}
 CHUNK=${5:-12}
-# How many gauges the gas rules are tried on, and the gas that is too little for any entry.
+# What Base and Ethereum allow a transaction.
+TRANSACTION_GAS=16777216
+# How many gauges the gas rules are tried on, the gas that is too little for any entry, and a number of entries per
+# call that puts them all in one.
 FEW=2
 STARVED=10000
+ALL=1000000
+# Simulation's outcomes.
+REVERTED=0
+PAID_IN_FULL=1
+PAID_NOTHING=3
 
 HASHES=verification/bytecode-hashes.json
 ARTIFACT=out/Simulation.sol/Simulation.json
@@ -67,42 +75,47 @@ direct() {
     --override-state-diff "$(as_operator "$SIM")" --json | jq -c '.[0]' | tr -d '"'
 }
 
+# Claims through the clone, the entries of the first $1 gauges getting $2 gas each, in calls of $3 entries that get
+# $4 gas: the outcome, the entries, the calls, the gas of the heaviest call and the programs it could not read.
+attempt() {
+  call "attempt($DEP_TYPE,uint256,address,uint256,uint256,uint256,uint256,uint256[])(uint8,uint256,uint256,uint256,uint256)" \
+    "$DEP" "$ID" "$RECIPIENT" "$1" "$2" "$3" "$4" "$5" --override-state-diff "$(as_operator "$operator")" --json
+}
+outcome() {
+  attempt "$FEW" "$1" "$ALL" "$2" "$few" | jq -j '.[0]'
+}
+
 echo "chain $CHAIN, block $BLOCK, stake $ID, recipient $RECIPIENT, clone $operator"
 expected=$(direct "$LIMIT")
 echo "Aero's own route pays: $expected"
-result=$(call "claim($DEP_TYPE,uint256,address,uint256,uint256,uint256,uint256[])(uint256,uint256,uint256,uint256,uint256[])" \
-  "$DEP" "$ID" "$RECIPIENT" "$LIMIT" "$ENTRY_GAS" "$CHUNK" "$expected" \
-  --override-state-diff "$(as_operator "$operator")" --json)
-echo "the clone paid the same, less the fee, and kept nothing: $(jq -j '.[0]' <<<"$result") entries in" \
-  "$(jq -j '.[1]' <<<"$result") calls of up to $CHUNK, the heaviest using $(jq -j '.[2]' <<<"$result") gas"
-unread=$(jq -j '.[3]' <<<"$result")
+result=$(attempt "$LIMIT" "$ENTRY_GAS" "$CHUNK" "$TRANSACTION_GAS" "$expected")
+[ "$(jq -j '.[0]' <<<"$result")" = "$PAID_IN_FULL" ] || { echo "the clone did not pay the same: $result" >&2; exit 1; }
+echo "the clone paid the same, less the fee, and kept nothing: $(jq -j '.[1]' <<<"$result") entries in" \
+  "$(jq -j '.[2]' <<<"$result") calls of up to $CHUNK, the heaviest using $(jq -j '.[3]' <<<"$result") gas"
+unread=$(jq -j '.[4]' <<<"$result")
 [ "$unread" = 0 ] || echo "warning: $unread incentive programs were too old to read or could not be estimated"
 
 # The node's gas rules, on the first gauges: an entry without enough gas fails alone, and the claim either reverts or
 # pays in full, whatever gas it is sent with.
 few=$(direct "$FEW")
-attempt() {
-  call "attempt($DEP_TYPE,uint256,address,uint256,uint256,uint256,uint256[])(uint8)" \
-    "$DEP" "$ID" "$RECIPIENT" "$FEW" "$1" "$2" "$few" --override-state-diff "$(as_operator "$operator")"
-}
-[ "$(attempt "$STARVED" 5000000)" = 3 ] || { echo "entries given too little gas did not all fail alone" >&2; exit 1; }
+[ "$(outcome "$STARVED" 5000000)" = "$PAID_NOTHING" ] || { echo "starved entries did not all fail alone" >&2; exit 1; }
 low=0
 high=$ENTRY_GAS
-while outcome=$(attempt "$ENTRY_GAS" "$high"); [ "$outcome" = 0 ]; do
+while paid=$(outcome "$ENTRY_GAS" "$high"); [ "$paid" = "$REVERTED" ]; do
   low=$high
   high=$((high * 2))
   [ "$high" -le 64000000 ] || { echo "the claim reverts even with $low gas" >&2; exit 1; }
 done
-while [ "$outcome" = 1 ] && [ $((high - low)) -gt 1000 ]; do
+while [ "$paid" = "$PAID_IN_FULL" ] && [ $((high - low)) -gt 1000 ]; do
   middle=$(((low + high) / 2))
-  outcome=$(attempt "$ENTRY_GAS" "$middle")
-  if [ "$outcome" = 0 ]; then
+  paid=$(outcome "$ENTRY_GAS" "$middle")
+  if [ "$paid" = "$REVERTED" ]; then
     low=$middle
-    outcome=1
+    paid=$PAID_IN_FULL
   else
     high=$middle
   fi
 done
-[ "$outcome" = 1 ] || { echo "with $high gas the claim went through without paying in full" >&2; exit 1; }
+[ "$paid" = "$PAID_IN_FULL" ] || { echo "with $high gas the claim went through without paying in full" >&2; exit 1; }
 echo "gas rules: entries given $STARVED gas fail alone; a claim of $FEW gauges reverts below about $high gas and" \
   "pays in full from there"

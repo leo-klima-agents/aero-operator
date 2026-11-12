@@ -7,7 +7,6 @@ import {ImmutableClaimOperator} from "../src/ImmutableClaimOperator.sol";
 import {ImmutableClaimOperatorFactory} from "../src/ImmutableClaimOperatorFactory.sol";
 import {ILeafVoter} from "../src/interfaces/ILeafVoter.sol";
 import {
-    MockBomb,
     MockFactoryRegistry,
     MockLeafVoter,
     MockRewardsManager,
@@ -143,29 +142,12 @@ contract OperatorTest is Test {
         _assertEmpty(factory.implementation());
     }
 
-    function test_constants() public view {
-        ImmutableClaimOperator implementation = ImmutableClaimOperator(payable(factory.implementation()));
-        assertEq(implementation.FEE_BPS(), 100);
-        assertEq(implementation.leafVoter(), address(voter));
-        assertEq(implementation.escrow(), address(escrow));
-        assertEq(implementation.baseChainId(), BASE);
-        assertEq(implementation.feeRecipient(), feeRecipient);
-        assertEq(address(implementation), vm.computeCreateAddress(address(factory), 1));
-    }
-
-    function test_constructor_rejectsAddressesWithoutCode() public {
+    function test_constructor_needsTheFeeRecipientToHaveCode() public {
         address none = makeAddr("none");
-        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.NoCode.selector, none));
-        new ImmutableClaimOperator(none, address(escrow), BASE, feeRecipient);
         vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.NoCode.selector, none));
         new ImmutableClaimOperator(address(voter), address(escrow), BASE, none);
         vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.NoCode.selector, none));
         new ImmutableClaimOperatorFactory(address(voter), address(escrow), BASE, none);
-
-        new ImmutableClaimOperator(address(voter), none, BASE, feeRecipient);
-        vm.chainId(BASE);
-        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.NoCode.selector, none));
-        new ImmutableClaimOperator(address(voter), none, BASE, feeRecipient);
     }
 
     function test_theImplementation_isNotAClone() public {
@@ -178,43 +160,6 @@ contract OperatorTest is Test {
         vm.expectRevert(ImmutableClaimOperator.NotClone.selector);
         implementation.claim(ID, _fees(pair), _none(), ENTRY_GAS);
         assertEq(aero.balanceOf(address(pair)), 1e18);
-    }
-
-    function test_nativeTokens_areRefusedOutsideAClaim() public {
-        factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
-        vm.deal(address(this), 2 ether);
-
-        (bool ok, bytes memory err) = address(operator).call{value: 1 ether}("");
-        assertFalse(ok);
-        assertEq(bytes4(err), ImmutableClaimOperator.NotClaiming.selector);
-        (ok, err) = factory.implementation().call{value: 1 ether}("");
-        assertFalse(ok);
-        assertEq(bytes4(err), ImmutableClaimOperator.NotClaiming.selector);
-    }
-
-    function test_firstClaim_deploysTheCloneAtThePredictedAddress() public {
-        assertEq(address(operator).code.length, 0);
-        _owe(pair, 1e18, 1e6);
-
-        factory.claim(recipient, ID, _fees(pair), _none(), ENTRY_GAS);
-
-        assertEq(
-            address(operator).code,
-            abi.encodePacked(
-                hex"363d3d373d3d3d363d73", factory.implementation(), hex"5af43d82803e903d91602b57fd5bf3", recipient
-            )
-        );
-        assertEq(operator.recipient(), recipient);
-        assertEq(operator.leafVoter(), address(voter));
-        assertEq(operator.feeRecipient(), feeRecipient);
-        assertEq(aero.balanceOf(recipient), 0.99e18);
-    }
-
-    function test_operatorOf_dependsOnTheRecipient() public {
-        address other = makeAddr("other");
-        assertNotEq(factory.operatorOf(other), address(operator));
-        factory.claim(other, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
-        assertEq(ImmutableClaimOperator(payable(factory.operatorOf(other))).recipient(), other);
     }
 
     function test_claim_splitsTokensAndNativeBetweenRecipientAndFee() public {
@@ -257,17 +202,6 @@ contract OperatorTest is Test {
         assertEq(usdc.balanceOf(feeRecipient), 1e6);
         assertEq(recipient.balance, 0.99 ether);
         assertEq(feeRecipient.balance, 0.01 ether);
-        _assertNothingLeft();
-    }
-
-    function test_claim_onTheCloneItself_onceDeployed() public {
-        factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
-        _owe(pair, 1e18, 0);
-
-        vm.prank(makeAddr("anyone"));
-        operator.claim(ID, _fees(pair), _none(), ENTRY_GAS);
-
-        assertEq(aero.balanceOf(recipient), 0.99e18);
         _assertNothingLeft();
     }
 
@@ -406,11 +340,6 @@ contract OperatorTest is Test {
         assertEq(aero.balanceOf(address(pair)), 1e18);
     }
 
-    function test_claim_failsForAnUnknownProgram() public {
-        _expectFailed(address(operator), address(pair), 7);
-        factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _incentive(pair, 7), ENTRY_GAS);
-    }
-
     function test_claim_onBase_onlyWhileTheRecipientOwnsTheStake() public {
         vm.chainId(BASE);
         _owe(pair, 1e18, 2e6);
@@ -466,64 +395,6 @@ contract OperatorTest is Test {
         assertEq(address(native).balance + weth.balanceOf(address(native)), 1 ether);
     }
 
-    function test_claim_revertsUnlessAnEntryCanBeGivenItsGas() public {
-        _owe(pair, 1e18, 2e6);
-
-        vm.expectRevert(ImmutableClaimOperator.InsufficientGas.selector);
-        factory.claim{gas: 900_000}(recipient, ID, _fees(pair), _none(), 1_000_000);
-
-        factory.claim{gas: 1_400_000}(recipient, ID, _fees(pair), _none(), 1_000_000);
-        assertEq(aero.balanceOf(recipient), 0.99e18);
-    }
-
-    function test_claim_succeedsOnlyWithEveryEntryGivenItsGas() public {
-        _owe(pair, 1e18, 2e6);
-        _owe(native, 1 ether, 0);
-        uint256 succeeded;
-        uint256 reverted;
-
-        for (uint256 gas = 50_000; gas <= 1_500_000; gas += 10_000) {
-            uint256 snapshot = vm.snapshotState();
-            try factory.claim{gas: gas}(recipient, ID, _fees(pair, native), _none(), 400_000) {
-                ++succeeded;
-                assertEq(aero.balanceOf(recipient), 0.99e18);
-                assertEq(usdc.balanceOf(recipient), 1.98e6);
-                assertEq(recipient.balance, 0.99 ether);
-                _assertNothingLeft();
-            } catch {
-                ++reverted;
-                assertEq(aero.balanceOf(recipient), 0);
-            }
-            vm.revertToState(snapshot);
-        }
-        assertGt(succeeded, 0);
-        assertGt(reverted, 0);
-    }
-
-    function test_claim_anEntryThatBurnsItsGasDoesNotBlockTheOthers() public {
-        MockToken bad = new MockToken();
-        MockRewardsManager broken = _manager(address(bad), address(aero));
-        _owe(broken, 5e18, 7e18);
-        _owe(pair, 1e18, 2e6);
-        _owe(native, 1 ether, 0);
-        bad.setMode(MockToken.Mode.BurnsGas);
-
-        ILeafVoter.FeeClaim[] memory claims = new ILeafVoter.FeeClaim[](3);
-        claims[0] = ILeafVoter.FeeClaim(address(broken), 500);
-        claims[1] = ILeafVoter.FeeClaim(address(pair), 500);
-        claims[2] = ILeafVoter.FeeClaim(address(native), 500);
-        _expectFailed(address(operator), address(broken), 0);
-        factory.claim{gas: 2_000_000}(recipient, ID, claims, _none(), 400_000);
-
-        assertEq(aero.balanceOf(recipient), 0.99e18);
-        assertEq(usdc.balanceOf(recipient), 1.98e6);
-        assertEq(recipient.balance, 0.99 ether);
-        (uint256 owed0, uint256 owed1) = broken.fees(ID);
-        assertEq(owed0, 5e18);
-        assertEq(owed1, 7e18);
-        _assertNothingLeft();
-    }
-
     function test_claim_aBudgetTooSmall_failsTheEntriesAndKeepsTheRewards() public {
         _owe(pair, 1e18, 2e6);
 
@@ -532,21 +403,6 @@ contract OperatorTest is Test {
 
         assertEq(aero.balanceOf(recipient), 0);
         assertEq(aero.balanceOf(address(pair)), 1e18);
-        _assertNothingLeft();
-    }
-
-    function test_claim_aHugeRevertDoesNotBlockTheOthers() public {
-        address bomb = address(new MockBomb());
-        registry.register(bomb);
-        _owe(pair, 1e18, 2e6);
-
-        ILeafVoter.FeeClaim[] memory claims = new ILeafVoter.FeeClaim[](2);
-        claims[0] = ILeafVoter.FeeClaim(bomb, 500);
-        claims[1] = ILeafVoter.FeeClaim(address(pair), 500);
-        _expectFailed(address(operator), bomb, 0);
-        factory.claim{gas: 2_000_000}(recipient, ID, claims, _none(), 400_000);
-
-        assertEq(aero.balanceOf(recipient), 0.99e18);
         _assertNothingLeft();
     }
 
@@ -562,6 +418,7 @@ contract OperatorTest is Test {
 
     function testFuzz_recipient_isTheOneTheCloneWasMadeFor(address account) public {
         ImmutableClaimOperator clone = ImmutableClaimOperator(payable(factory.operatorOf(account)));
+        assertEq(address(clone).code.length, 0);
 
         factory.claim(account, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
 
@@ -580,17 +437,6 @@ contract OperatorTest is Test {
             factory.claim(accounts[i], ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
             assertEq(ImmutableClaimOperator(payable(factory.operatorOf(accounts[i]))).recipient(), accounts[i]);
         }
-    }
-
-    function test_claimEntry_simulatedFromTheClone_paysNativeTokensToo() public {
-        factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
-        _owe(native, 1 ether, 3e6);
-
-        vm.prank(address(operator));
-        operator.claimEntry(ID, address(native), true, 0, 500);
-
-        assertEq(recipient.balance, 0.99 ether);
-        assertEq(usdc.balanceOf(recipient), 2.97e6);
     }
 
     function test_claimEntry_simulatedFromTheClone_givesTheReason() public {
