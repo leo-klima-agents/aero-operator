@@ -82,14 +82,14 @@ The addresses are the same on every chain:
 
 | | |
 |---|---|
-| Factory | `0x094a9b48B486bF2b2e98bc8d087B3A2C321Bb24b` |
-| `ImmutableClaimOperator` | `0xd8F04Fb430abB3a02fCe87652C47292FAaE1E290` |
+| Factory | `0x0FcA341f092e7f8cCeBf0e8B52b5C6061eA46B57` |
+| `ImmutableClaimOperator` | `0x0D4f1242c62CC2f3a3a64f11f4d719F27810B0d5` |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
 | Base's chain id | 8453 |
 | Fee Safe | `0x450c72de8c0079B49AcedF294a13011bd09D125B`, a proxy to the Safe 1.5.0 singleton |
 | Fee | 1%, fixed in the source |
-| Method | CREATE2 through `0x4e59b44847b379578588920cA78FbF26c0B4956C`, salt `keccak256("aero-operator/ImmutableClaimOperatorFactory/v1")` |
+| Method | CREATE2 through `0x4e59b44847b379578588920cA78FbF26c0B4956C`, salt `keccak256("metadex.cafe/ImmutableClaimOperatorFactory/v1")` |
 
 For each chain:
 
@@ -102,9 +102,9 @@ For each chain:
 ```
 forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --ledger
 ARGS=$(jq -j .deployment.constructorArgs verification/bytecode-hashes.json)
-forge verify-contract 0x094a9b48B486bF2b2e98bc8d087B3A2C321Bb24b src/ImmutableClaimOperatorFactory.sol:ImmutableClaimOperatorFactory \
+forge verify-contract 0x0FcA341f092e7f8cCeBf0e8B52b5C6061eA46B57 src/ImmutableClaimOperatorFactory.sol:ImmutableClaimOperatorFactory \
   --rpc-url $RPC_URL --constructor-args $ARGS --license-type MIT --watch
-forge verify-contract 0xd8F04Fb430abB3a02fCe87652C47292FAaE1E290 src/ImmutableClaimOperator.sol:ImmutableClaimOperator \
+forge verify-contract 0x0D4f1242c62CC2f3a3a64f11f4d719F27810B0d5 src/ImmutableClaimOperator.sol:ImmutableClaimOperator \
   --rpc-url $RPC_URL --constructor-args $ARGS --license-type MIT --watch
 ```
 
@@ -113,9 +113,9 @@ forge verify-contract 0xd8F04Fb430abB3a02fCe87652C47292FAaE1E290 src/ImmutableCl
 Compare the deployed code hashes with `verification/bytecode-hashes.json`:
 
 ```
-cast keccak $(cast code 0x094a9b48B486bF2b2e98bc8d087B3A2C321Bb24b --rpc-url $RPC_URL)
+cast keccak $(cast code 0x0FcA341f092e7f8cCeBf0e8B52b5C6061eA46B57 --rpc-url $RPC_URL)
 jq -j .deployment.factoryRuntimeKeccak verification/bytecode-hashes.json
-cast keccak $(cast code 0xd8F04Fb430abB3a02fCe87652C47292FAaE1E290 --rpc-url $RPC_URL)
+cast keccak $(cast code 0x0D4f1242c62CC2f3a3a64f11f4d719F27810B0d5 --rpc-url $RPC_URL)
 jq -j .deployment.implementationRuntimeKeccak verification/bytecode-hashes.json
 ```
 

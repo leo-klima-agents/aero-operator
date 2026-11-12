@@ -46,7 +46,7 @@ abstract contract ForkTest is Test {
     ImmutableClaimOperator internal operator;
     address internal recipient;
     address internal feeRecipient;
-    address internal caller = makeAddr("caller");
+    address internal keeper = makeAddr("keeper");
 
     ILeafVoter.FeeClaim[] internal feeClaims;
     ILeafVoter.IncentiveClaim[] internal incentiveClaims;
@@ -102,7 +102,7 @@ abstract contract ForkTest is Test {
 
     function _claim() internal returns (Vm.Log[] memory) {
         vm.recordLogs();
-        vm.prank(caller);
+        vm.prank(keeper);
         uint256 gas = gasleft();
         factory.claim(recipient, _stake(), feeClaims, incentiveClaims, ENTRY_GAS);
         claimGas = gas - gasleft();
