@@ -32,6 +32,7 @@ library Discovery {
         address[] tokens;
         address wrappedNative;
         uint256 unreadPrograms;
+        uint256 leftOut;
     }
 
     function claims(address leafVoter, uint256 tokenId, uint256 maxGauges, bool onlyWhatAForkRuns)
@@ -52,7 +53,10 @@ library Discovery {
             IVotingRewardsManager manager =
                 IVotingRewardsManager(IFactoryRegistryViews(registry).gaugeToRewards(gauges[i]));
             (address token0, address token1) = (manager.token0(), manager.token1());
-            if (onlyWhatAForkRuns && !(_runsInAFork(token0) && _runsInAFork(token1))) continue;
+            if (onlyWhatAForkRuns && !(_runsInAFork(token0) && _runsInAFork(token1))) {
+                ++found.leftOut;
+                continue;
+            }
             address native = manager.wrappedNative();
             if (managers == 0) found.wrappedNative = native;
             require(native == found.wrappedNative, "rewards managers differ on the wrapped native token");
@@ -71,7 +75,10 @@ library Discovery {
                     continue;
                 }
                 address token = manager.incentive(id);
-                if (onlyWhatAForkRuns && !_runsInAFork(token)) continue;
+                if (onlyWhatAForkRuns && !_runsInAFork(token)) {
+                    ++found.leftOut;
+                    continue;
+                }
                 incentives[programs++] = ILeafVoter.IncentiveClaim(address(manager), id, MAX_CHECKPOINTS);
                 count = _track(tokens, count, token, native);
             }

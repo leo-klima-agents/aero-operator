@@ -26,11 +26,23 @@ contract Simulation {
         return _factory(dep).operatorOf(recipient);
     }
 
-    function claimAsOperator(address leafVoter, uint256 tokenId, address recipient, uint256 maxGauges)
+    function gasLeft() external view returns (uint256) {
+        return gasleft();
+    }
+
+    function passesOnAllButOne64thOfItsGas() external view returns (bool) {
+        uint256 held = gasleft();
+        uint256 passedOn = this.gasLeft();
+        uint256 allButOne64th = held - held / 64;
+        uint256 asked = this.gasLeft{gas: 100_000}();
+        return passedOn <= allButOne64th && passedOn + 5_000 > allButOne64th && asked <= 100_000 && asked > 99_000;
+    }
+
+    function claimAsOperator(address leafVoter, uint256 tokenId, address recipient, uint256 maxGauges, bool feesOnly)
         external
         returns (uint256[] memory)
     {
-        Discovery.Claims memory claims = Discovery.claims(leafVoter, tokenId, maxGauges, false);
+        Discovery.Claims memory claims = _claims(leafVoter, tokenId, maxGauges, feesOnly);
         uint256[] memory before = Discovery.balances(claims.tokens, recipient);
         ILeafVoter(leafVoter).claimRewards(tokenId, recipient, claims.fees, claims.incentives);
         return Discovery.gained(claims.tokens, recipient, before);
@@ -41,13 +53,14 @@ contract Simulation {
         uint256 tokenId,
         address recipient,
         uint256 maxGauges,
+        bool feesOnly,
         uint256 entryGas,
         uint256 entriesPerCall,
         uint256 gasPerCall,
         uint256[] calldata paidByAero
     ) external returns (Outcome outcome, uint256 entries, uint256 calls, uint256 mostGas, uint256 unreadPrograms) {
         ImmutableClaimOperatorFactory factory = _factory(dep);
-        Discovery.Claims memory claims = Discovery.claims(dep.leafVoter, tokenId, maxGauges, false);
+        Discovery.Claims memory claims = _claims(dep.leafVoter, tokenId, maxGauges, feesOnly);
         entries = claims.fees.length + claims.incentives.length;
         unreadPrograms = claims.unreadPrograms;
         uint256[] memory before = Discovery.balances(claims.tokens, recipient);
@@ -83,6 +96,15 @@ contract Simulation {
             }
         }
         outcome = nothing ? Outcome.PaidNothing : inFull ? Outcome.PaidInFull : Outcome.PaidInPart;
+    }
+
+    function _claims(address leafVoter, uint256 tokenId, uint256 maxGauges, bool feesOnly)
+        private
+        view
+        returns (Discovery.Claims memory claims)
+    {
+        claims = Discovery.claims(leafVoter, tokenId, maxGauges, false);
+        if (feesOnly) claims.incentives = new ILeafVoter.IncentiveClaim[](0);
     }
 
     function _factory(Deployment calldata dep) private returns (ImmutableClaimOperatorFactory) {

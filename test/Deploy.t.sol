@@ -15,9 +15,10 @@ contract DeployTest is Test {
         vm.etch(d.FEE_RECIPIENT(), hex"00");
     }
 
-    function test_run_deploysAtThePredictedAddresses_onAnyChain() public {
+    function test_run_deploysTheRecordedCodeAtThePredictedAddresses() public {
         uint256[3] memory chains = [uint256(10), 1, 42161];
         address predicted = d.predict();
+        string memory record = vm.readFile("verification/bytecode-hashes.json");
         for (uint256 i; i < chains.length; ++i) {
             uint256 snapshot = vm.snapshotState();
             vm.chainId(chains[i]);
@@ -28,6 +29,10 @@ contract DeployTest is Test {
             ImmutableClaimOperatorFactory factory = ImmutableClaimOperatorFactory(predicted);
             ImmutableClaimOperator implementation = ImmutableClaimOperator(payable(factory.implementation()));
             assertEq(address(implementation), d.predictImplementation());
+            assertEq(address(factory).codehash, vm.parseJsonBytes32(record, ".deployment.factoryRuntimeKeccak"));
+            assertEq(
+                address(implementation).codehash, vm.parseJsonBytes32(record, ".deployment.implementationRuntimeKeccak")
+            );
             assertEq(implementation.leafVoter(), d.LEAF_VOTER());
             assertEq(implementation.escrow(), d.ESCROW());
             assertEq(implementation.baseChainId(), d.BASE_CHAIN_ID());

@@ -28,7 +28,7 @@ contract MockToken {
     }
 
     function transfer(address to, uint256 amount) external {
-        require(!blocked[to], "blocked");
+        require(!blocked[to] && amount != 0, "blocked or nothing to send");
         if (mode == Mode.BurnsGas) {
             assembly ("memory-safe") {
                 invalid()
@@ -85,6 +85,8 @@ contract MockRewardsManager {
     address public immutable wrappedNative;
 
     uint256 public incentiveCount;
+    uint256 public work;
+    uint256 public lastMaxCheckpoints;
     mapping(uint256 programId => Incentive) public incentive;
     mapping(uint256 tokenId => uint256[2]) internal _fees;
     mapping(uint256 tokenId => mapping(uint256 programId => uint256)) public incentives;
@@ -115,8 +117,13 @@ contract MockRewardsManager {
         incentives[tokenId][programId] = amount;
     }
 
+    function setWork(uint256 work_) external {
+        work = work_;
+    }
+
     function claimFees(uint256 tokenId, address recipient, uint256 maxCheckpoints) external {
         require(msg.sender == voter && maxCheckpoints != 0, "claimFees");
+        _work(maxCheckpoints);
         (uint256 amount0, uint256 amount1) = (_fees[tokenId][0], _fees[tokenId][1]);
         delete _fees[tokenId];
         _pay(recipient, token0, amount0);
@@ -125,10 +132,17 @@ contract MockRewardsManager {
 
     function claimIncentives(uint256 tokenId, address recipient, uint256 programId, uint256 maxCheckpoints) external {
         require(msg.sender == voter && maxCheckpoints != 0, "claimIncentives");
+        _work(maxCheckpoints);
         require(programId != 0 && programId <= incentiveCount, "program");
         uint256 amount = incentives[tokenId][programId];
         delete incentives[tokenId][programId];
         _pay(recipient, incentive[programId].token, amount);
+    }
+
+    function _work(uint256 maxCheckpoints) private {
+        lastMaxCheckpoints = maxCheckpoints;
+        uint256 afterWork = gasleft() - work;
+        while (gasleft() > afterWork) {}
     }
 
     function _pay(address recipient, address token, uint256 amount) private {

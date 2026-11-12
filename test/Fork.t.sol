@@ -82,6 +82,7 @@ abstract contract ForkTest is Test {
         Discovery.Claims memory claims = Discovery.claims(address(leaf), _stake(), 0, true);
         assertGt(claims.fees.length, 0, "the stake has nothing to claim on this chain at this block");
         assertEq(claims.unreadPrograms, 0, "some incentive programs could not be read");
+        emit log_named_uint("gauges and programs left out, which a fork cannot run", claims.leftOut);
         for (uint256 i; i < claims.fees.length; ++i) {
             feeClaims.push(claims.fees[i]);
         }
@@ -117,7 +118,7 @@ abstract contract ForkTest is Test {
         vm.revertToState(snapshot);
     }
 
-    function _checkWhatAFirstFeeClaimNeeds() internal {
+    function _checkTheGasAFirstClaimNeeds() internal {
         _setOperator(address(operator));
         assertEq(_failuresWith(700_000), 0);
         assertGt(_failuresWith(500_000), 0);
@@ -166,7 +167,7 @@ abstract contract ForkTest is Test {
         }
     }
 
-    function test_addresses_matchTheRecordOnEveryChain() public view {
+    function test_addresses_matchTheRecord() public view {
         string memory json = vm.readFile("verification/bytecode-hashes.json");
         assertEq(address(factory), vm.parseJsonAddress(json, ".deployment.factory"));
         assertEq(factory.implementation(), vm.parseJsonAddress(json, ".deployment.implementation"));
@@ -205,12 +206,9 @@ abstract contract ForkTest is Test {
 
     function test_claim_revertsUnlessAnEntryCanBeGivenItsGas() public {
         _setOperator(address(operator));
-        uint256[] memory before = _balances(recipient);
 
         vm.expectRevert(ImmutableClaimOperator.InsufficientGas.selector);
         factory.claim{gas: ENTRY_GAS}(recipient, _stake(), feeClaims, incentiveClaims, ENTRY_GAS);
-
-        assertEq(_balances(recipient), before);
     }
 
     function test_claim_paysInFullLessTheFee() public {
@@ -305,8 +303,8 @@ contract BaseForkTest is ForkTest {
         VOTER.setOperator(_stake(), block.chainid, account, 0, recipient);
     }
 
-    function test_claim_aFirstFeeClaimNeedsMoreThan500000Gas() public {
-        _checkWhatAFirstFeeClaimNeeds();
+    function test_claim_noEntryFailsWith700000GasAndSomeDoWith500000() public {
+        _checkTheGasAFirstClaimNeeds();
     }
 
     function test_claim_leavesTheStakeWithItsOwner() public {
@@ -386,8 +384,8 @@ contract EthereumForkTest is ForkTest {
         leaf.setOperator(_stake(), account);
     }
 
-    function test_claim_aFirstFeeClaimNeedsMoreThan500000Gas() public {
-        _checkWhatAFirstFeeClaimNeeds();
+    function test_claim_noEntryFailsWith700000GasAndSomeDoWith500000() public {
+        _checkTheGasAFirstClaimNeeds();
     }
 
     function test_claim_aTokenTheRecipientCannotReceive_failsAloneAndStaysClaimable() public {

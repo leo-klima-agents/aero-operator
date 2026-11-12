@@ -17,6 +17,11 @@ import {
 } from "./mocks/Mocks.sol";
 
 uint256 constant ENTRY_GAS = 1_000_000;
+uint256 constant RESERVED_GAS = 20_000;
+uint256 constant USED_BY_THE_FACTORY = 4374;
+uint256 constant USED_TO_DEPLOY_A_CLONE = 45_094;
+uint256 constant USED_BY_THE_PROXY = 2624;
+uint256 constant USED_BEFORE_ONE_FEE_ENTRY = 4146;
 
 contract Reenterer {
     ImmutableClaimOperatorFactory internal immutable FACTORY;
@@ -36,6 +41,15 @@ contract Reenterer {
             reason = err;
             if (BUBBLE) revert("reentered");
         }
+    }
+}
+
+contract Twice {
+    function claim(ImmutableClaimOperatorFactory factory, address recipient, ILeafVoter.FeeClaim[] calldata fees)
+        external
+    {
+        factory.claim(recipient, 1, fees, new ILeafVoter.IncentiveClaim[](0), ENTRY_GAS);
+        factory.claim(recipient, 1, fees, new ILeafVoter.IncentiveClaim[](0), ENTRY_GAS);
     }
 }
 
@@ -99,6 +113,23 @@ contract OperatorTest is Test {
     function _fees(MockRewardsManager a) internal pure returns (ILeafVoter.FeeClaim[] memory claims) {
         claims = new ILeafVoter.FeeClaim[](1);
         claims[0] = ILeafVoter.FeeClaim(address(a), 500);
+    }
+
+    function _gasToHoldToPassOn(uint256 gas) internal pure returns (uint256) {
+        return gas + gas / 63;
+    }
+
+    function _leastGas(address target, bytes memory data) internal returns (uint256 goesThrough) {
+        uint256 reverts = 0;
+        goesThrough = 30_000_000;
+        while (goesThrough - reverts > 1) {
+            uint256 halfway = (reverts + goesThrough) / 2;
+            uint256 snapshot = vm.snapshotState();
+            (bool ok,) = target.call{gas: halfway}(data);
+            vm.revertToState(snapshot);
+            if (ok) goesThrough = halfway;
+            else reverts = halfway;
+        }
     }
 
     function _fees(MockRewardsManager a, MockRewardsManager b)
@@ -182,6 +213,7 @@ contract OperatorTest is Test {
         assertEq(usdc.balanceOf(feeRecipient), 0.07e6);
         assertEq(recipient.balance, 2.97 ether);
         assertEq(feeRecipient.balance, 0.03 ether);
+        assertEq(pair.lastMaxCheckpoints(), 500);
         _assertNothingLeft();
     }
 
@@ -195,13 +227,14 @@ contract OperatorTest is Test {
 
         ILeafVoter.IncentiveClaim[] memory claims = new ILeafVoter.IncentiveClaim[](2);
         claims[0] = ILeafVoter.IncentiveClaim(address(pair), programId, 500);
-        claims[1] = ILeafVoter.IncentiveClaim(address(pair), nativeId, 500);
+        claims[1] = ILeafVoter.IncentiveClaim(address(pair), nativeId, 77);
         factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), claims, ENTRY_GAS);
 
         assertEq(usdc.balanceOf(recipient), 99e6);
         assertEq(usdc.balanceOf(feeRecipient), 1e6);
         assertEq(recipient.balance, 0.99 ether);
         assertEq(feeRecipient.balance, 0.01 ether);
+        assertEq(pair.lastMaxCheckpoints(), 77);
         _assertNothingLeft();
     }
 
@@ -288,7 +321,7 @@ contract OperatorTest is Test {
     }
 
     function test_claim_rollsBackATransferThatReturnsFalse() public {
-        _owe(pair, 1e18, 2e6);
+        _owe(pair, 1e18, 0);
         factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
         usdc.mint(address(operator), 1e6);
         usdc.setMode(MockToken.Mode.ReturnsFalse);
@@ -404,6 +437,89 @@ contract OperatorTest is Test {
         assertEq(aero.balanceOf(recipient), 0);
         assertEq(aero.balanceOf(address(pair)), 1e18);
         _assertNothingLeft();
+    }
+
+    function test_claim_twiceInOneTransaction() public {
+        Twice twice = new Twice();
+        _owe(pair, 1e18, 2e6);
+
+        twice.claim(factory, recipient, _fees(pair));
+
+        assertEq(aero.balanceOf(recipient), 0.99e18);
+    }
+
+    function test_claim_revertsIfTheCloneCannotBeDeployed() public {
+        vm.setNonce(address(operator), 1);
+
+        vm.expectRevert();
+        factory.claim(recipient, ID, _fees(pair), _none(), ENTRY_GAS);
+    }
+
+    function test_claim_leastGasFollowsTheFormula() public {
+        _owe(pair, 1e18, 2e6);
+        uint256[4] memory budgets = [uint256(300_000), 1_000_000, 2_345_678, 5_000_000];
+        uint256 beforeTheClone = vm.snapshotState();
+
+        for (uint256 i; i < budgets.length; ++i) {
+            bytes memory toClone = abi.encodeCall(ImmutableClaimOperator.claim, (ID, _fees(pair), _none(), budgets[i]));
+            bytes memory toFactory = abi.encodeCall(factory.claim, (recipient, ID, _fees(pair), _none(), budgets[i]));
+            uint256 words = (toClone.length + 31) / 32;
+            uint256 forClone = USED_BY_THE_PROXY + 6 * words + words * words / 512
+                + _gasToHoldToPassOn(USED_BEFORE_ONE_FEE_ENTRY + RESERVED_GAS + _gasToHoldToPassOn(budgets[i]));
+            uint256 forFactory = USED_BY_THE_FACTORY + _gasToHoldToPassOn(forClone);
+
+            assertEq(_leastGas(address(factory), toFactory), forFactory + USED_TO_DEPLOY_A_CLONE);
+            factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+            assertEq(_leastGas(address(operator), toClone), forClone);
+            assertEq(_leastGas(address(factory), toFactory), forFactory);
+            vm.revertToState(beforeTheClone);
+        }
+    }
+
+    function _paid() internal view returns (bool) {
+        return aero.balanceOf(recipient) + usdc.balanceOf(recipient) != 0;
+    }
+
+    function _assertGoesThroughOnlyIfTheEntryGotItsGas(
+        ILeafVoter.FeeClaim[] memory fees,
+        ILeafVoter.IncentiveClaim[] memory incentives
+    ) internal returns (uint256 entryGas) {
+        uint256 tooLittle = 0;
+        entryGas = 3_000_000;
+        while (entryGas - tooLittle > 1) {
+            uint256 halfway = (tooLittle + entryGas) / 2;
+            uint256 snapshot = vm.snapshotState();
+            factory.claim(recipient, ID, fees, incentives, halfway);
+            if (_paid()) entryGas = halfway;
+            else tooLittle = halfway;
+            vm.revertToState(snapshot);
+        }
+        bytes memory data = abi.encodeCall(factory.claim, (recipient, ID, fees, incentives, entryGas));
+        uint256 leastGas = _leastGas(address(factory), data);
+
+        for (uint256 gas = leastGas - 50; gas < leastGas + 100; ++gas) {
+            uint256 snapshot = vm.snapshotState();
+            (bool ok,) = address(factory).call{gas: gas}(data);
+            assertEq(ok, gas >= leastGas);
+            assertEq(_paid(), ok);
+            vm.revertToState(snapshot);
+        }
+    }
+
+    function test_claim_goesThroughOnlyIfTheEntryGotItsGas() public {
+        factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+        _owe(pair, 1e18, 0);
+        uint256 programId = pair.addIncentive(address(usdc));
+        _fund(pair, address(usdc), 2e6);
+        pair.setIncentive(ID, programId, 2e6);
+        pair.setWork(1_300_000);
+
+        uint256 forFees = _assertGoesThroughOnlyIfTheEntryGotItsGas(_fees(pair), _none());
+        uint256 forAnIncentive =
+            _assertGoesThroughOnlyIfTheEntryGotItsGas(new ILeafVoter.FeeClaim[](0), _incentive(pair, programId));
+
+        assertGt(forFees, 1_300_000);
+        assertApproxEqAbs(forAnIncentive, forFees, 50_000);
     }
 
     function test_claimEntry_onlyFromTheCloneItself() public {

@@ -48,12 +48,13 @@ for name in "${CONTRACTS[@]}"; do
   fi
 done
 
-for key in factory implementation; do
-  address=$(jq -j ".deployment.$key" "$HASHES")
-  if grep -qF "\`$address\`" README.md; then
-    echo "README.md $key address ok"
+for key in .deployment.factory .deployment.implementation .deployment.leafVoter .deployment.escrow \
+  .deployment.feeRecipient .create2Deployer .saltPreimage; do
+  value=$(jq -j "$key" "$HASHES")
+  if grep -qF "$value" README.md; then
+    echo "README.md $key ok"
   else
-    echo "::error::README.md does not show $address" >&2
+    echo "::error::README.md does not show $value" >&2
     status=1
   fi
 done

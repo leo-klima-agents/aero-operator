@@ -1,8 +1,9 @@
 # aero-operator
 
 `ImmutableClaimOperator` claims an Aero stake's rewards for one fixed recipient. A stake's owner names the recipient's
-clone as the stake's operator on a chain. Anyone can then claim the stake's rewards there through the clone, which pays
-them to the recipient and 1% to a fee Safe.
+clone as the stake's operator on a chain, with `setOperator(tokenId, chainId, operator, gasLimit, refundTo)` on Aero's
+Voter on Base. Anyone can then claim the stake's rewards there through the clone, which pays them to the recipient and
+1% to a fee Safe. Setting the zero address or another operator ends it.
 
 Neither contract has an owner, settings or an upgrade path:
 
@@ -26,7 +27,8 @@ Neither contract has an owner, settings or an upgrade path:
   the recipient. A manager pays its `wrappedNative` token in native tokens, and the clone forwards those.
 - An entry that fails is undone: its rewards stay in the rewards manager, the clone emits
   `ClaimFailed(tokenId, votingRewardsManager, fees, programId)` and goes on. For each token it forwards, it emits
-  `Claimed(tokenId, token, amount, fee)`.
+  `Claimed(tokenId, token, amount, fee)`: `token` is the wrapped token for native tokens, and `amount` is all the clone
+  held, fee included.
 - Each entry gets `entryGas`. `claim` reverts with `InsufficientGas` unless it can pass that much on and keep 20,000
   to go on. So a claim never succeeds with an entry that failed for lack of gas in the transaction.
 - On Base, `claim` reverts with `NotOwner` unless the recipient owns the stake. Other chains can't tell, and a stake
@@ -39,14 +41,30 @@ Neither contract has an owner, settings or an upgrade path:
   `FACTORY_REGISTRY` gives a gauge's rewards manager. A gauge the stake has left can still owe it rewards: its manager's
   `userRewardCheckpointIndex(tokenId)` is not 0. `earnedFees` and `earnedIncentives` on a manager estimate a claim.
 - **Entry gas.** A stake's first fee claim from a manager is the heaviest. In the fork tests none fails with 700,000
-  and some do with 500,000. An entry that needs more than `entryGas` fails and can be claimed again.
-- **Gas limit.** Before its last entry the clone needs `entryGas × 64 / 63 + 20,000`, and through the factory 64/63 of
-  that. With less the whole claim reverts, so add a margin.
+  and some do with 500,000. On Arc one needed 806,791. `script/simulate.sh` prints what a stake's first fee entry
+  needs. An entry that needs more than `entryGas` fails and can be claimed again.
+- **Gas limit.** A claim through the factory reverts with less than
+
+      I + F + g(P + g(U + 20,000 + g(entryGas)))        where g(x) = x + ⌊x / 63⌋
+
+  and goes through with that much. A call keeps a 64th of the gas, so `g(x)` is what it takes to pass `x` on.
+
+  | | | For one fee entry |
+  |---|---|---|
+  | `I` | The transaction's intrinsic gas | 21,000 plus 4 per zero byte and 16 per other byte of calldata |
+  | `F` | What the factory uses before it calls the clone | 4,374, and 45,094 more when it deploys the clone |
+  | `P` | What the clone's proxy uses: `2,624 + 6w + ⌊w² / 512⌋` for `w` 32-byte words of calldata to the clone | 2,678 |
+  | `U` | What the clone uses before its last entry, earlier entries included | 4,146, and 9,810 on Base |
+
+  A claim sent to the clone needs `I + P + g(U + 20,000 + g(entryGas))`. Transactions bisected on Base, Ethereum and
+  Arc matched to the unit. `eth_estimateGas` finds a limit that goes through. Earlier entries can use more by the time
+  the transaction lands, up to `entryGas` each, so add a margin.
 - **Cost.** An entry costs about 60,000 gas more than through Aero's Voter. Base and Ethereum allow a transaction
   16,777,216 gas, so split long lists.
 - **Failures.** To learn why an entry fails, call the clone's
   `claimEntry(tokenId, votingRewardsManager, fees, programId, maxCheckpoints)` in an `eth_call` from the clone's own
-  address. It reverts with the reason.
+  address. It reverts with the reason. Anyone can make a clone emit `ClaimFailed`, with too little `entryGas` or a
+  manager the registry does not list.
 
 ## Limits
 
@@ -61,11 +79,14 @@ Neither contract has an owner, settings or an upgrade path:
   fee.
 - An operator set before a sale stays set. On Base, a buyer's own clone set by the seller works once the buyer owns
   the stake.
+- A stake has one operator per chain, and only the operator can change its allocation there. A clone can't, so the
+  owner sets another operator to reallocate.
 
 ## Deployment
 
 Not deployed. The factory needs the fee Safe on the chain: its constructor reverts with `NoCode` otherwise. On
-2026-11-11 the Safe was only on Base.
+2026-11-11 the Safe was only on Base. The constructor only checks for code, so check the Safe's owners and threshold
+on each chain.
 
 | Chain | Id | LeafVoter | CREATE2 deployer | Fee Safe | Safe 1.5.0 singleton |
 |---|---|---|---|---|---|
@@ -95,7 +116,8 @@ For each chain:
 
 1. Install Foundry v1.9.0 with `foundryup --install v1.9.0`. Another version can compile different bytecode.
 2. Run `forge test` with `BASE_RPC_URL` and `ETHEREUM_RPC_URL` set, then `script/check-verification.sh`.
-3. Run `script/simulate.sh $RPC_URL <token-id>` for a stake with rewards on the chain.
+3. Run `script/simulate.sh $RPC_URL <token-id>` for a stake with rewards on the chain. Off Base, `RECIPIENT` sets the
+   recipient to simulate.
 4. Run `forge script script/Deploy.s.sol --rpc-url $RPC_URL` and check the addresses it logs.
 5. Deploy and verify:
 
@@ -128,8 +150,8 @@ A clone's code is `0x363d3d373d3d3d363d73`, the `ImmutableClaimOperator`'s addre
   `ETHEREUM_RPC_URL` point to archive nodes. The fork tests compare a claim through a clone with the same claim by
   Aero's own route, for a real stake.
 - `script/simulate.sh <rpc-url> <token-id> [max-gauges] [entry-gas] [entries-per-call]` makes the same comparison on
-  a live node, in `eth_call`s with state overrides, and checks the node's gas rules. It covers what a fork can't run:
-  Base's native tokens, Arc's USDC and each chain's own gas rules. It passes on all eight chains.
+  a live node that takes state overrides in `eth_call`, and checks the node's gas rules. It covers what a fork can't
+  run: Base's native tokens, Arc's USDC and each chain's own gas rules. It passes on all eight chains.
 - `script/check-verification.sh` checks `verification/` and this file's addresses against the build.
   `script/refresh-verification.sh` regenerates `verification/`.
 
