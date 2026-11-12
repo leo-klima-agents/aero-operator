@@ -21,13 +21,12 @@ interface IVotingRewardsManagerViews {
         returns (uint256);
 }
 
-// What a stake can claim on the chain, for the fork tests and the live simulation.
 library Discovery {
     uint256 internal constant MAX_CHECKPOINTS = 500;
     uint256 internal constant MAX_PROGRAMS = 64;
 
-    // `tokens` are the tokens the claims pay. Where rewards managers pay their wrapped native token in native tokens,
-    // it is left out and the last token is the zero address, for those.
+    // Where managers pay native tokens, `tokens` ends with the zero address, for those.
+    // `unread` counts the programs that are too old to read or whose estimate reverts.
     struct Claims {
         ILeafVoter.FeeClaim[] fees;
         ILeafVoter.IncentiveClaim[] incentives;
@@ -36,10 +35,8 @@ library Discovery {
         uint256 unread;
     }
 
-    // The fees of every gauge the stake is allocated to, up to `limit` gauges if it is not 0, and of each gauge's
-    // newest programs, those that owe the stake. A gauge the stake has left is not found, and `unread` counts the
-    // programs that are too old to be read or whose estimate reverts. With `forkable`, what pays a token that runs in
-    // the node itself is left out: Base's native tokens, whose code is 0xef.
+    // What the stake's gauges owe it, the first `limit` gauges if not 0.
+    // `forkable` leaves out what pays a token that a fork cannot run.
     function claims(address leafVoter, uint256 tokenId, uint256 limit, bool forkable)
         internal
         view

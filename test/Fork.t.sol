@@ -46,7 +46,7 @@ abstract contract ForkTest is Test {
     ImmutableClaimOperator internal operator;
     address internal recipient;
     address internal feeRecipient;
-    address internal keeper = makeAddr("keeper");
+    address internal caller = makeAddr("caller");
 
     ILeafVoter.FeeClaim[] internal feeClaims;
     ILeafVoter.IncentiveClaim[] internal incentiveClaims;
@@ -70,7 +70,7 @@ abstract contract ForkTest is Test {
         d = new Deploy();
         leaf = ILeafVoterExtra(d.LEAF_VOTER());
         feeRecipient = d.FEE_RECIPIENT();
-        // Where the fee Safe is not deployed yet, a contract that only accepts payments stands in for it.
+        // Stands in for the fee Safe where it is missing.
         if (feeRecipient.code.length == 0) vm.etch(feeRecipient, hex"00");
         factory = ImmutableClaimOperatorFactory(d.run());
         recipient = _recipient();
@@ -102,14 +102,13 @@ abstract contract ForkTest is Test {
 
     function _claim() internal returns (Vm.Log[] memory) {
         vm.recordLogs();
-        vm.prank(keeper);
+        vm.prank(caller);
         uint256 gas = gasleft();
         factory.claim(recipient, _stake(), feeClaims, incentiveClaims, ENTRY_GAS);
         claimGas = gas - gasleft();
         return vm.getRecordedLogs();
     }
 
-    // How many entries of a first claim fail when each is given `entryGas`.
     function _failuresWith(uint256 entryGas) internal returns (uint256 failures) {
         uint256 snapshot = vm.snapshotState();
         vm.recordLogs();
@@ -118,7 +117,6 @@ abstract contract ForkTest is Test {
         vm.revertToState(snapshot);
     }
 
-    // The README's advice on `entryGas`, for a stake whose fees have never been claimed.
     function _checkWhatAFirstFeeClaimNeeds() internal {
         _setOperator(address(operator));
         assertEq(_failuresWith(700_000), 0);
@@ -131,7 +129,6 @@ abstract contract ForkTest is Test {
         }
     }
 
-    // What the `Claimed` events add up to, by token: amounts first, then fees. Each fee is 1%, rounded down.
     function _claimed(Vm.Log[] memory logs) internal view returns (uint256[] memory amounts, uint256[] memory fees) {
         amounts = new uint256[](tokens.length);
         fees = new uint256[](tokens.length);
@@ -383,7 +380,7 @@ contract EthereumForkTest is ForkTest {
         return makeAddr("recipient");
     }
 
-    // What the Voter's message does when it arrives from Base.
+    // As the Voter's message from Base does.
     function _setOperator(address account) internal override {
         vm.prank(leaf.ORCHESTRATOR());
         leaf.setOperator(_stake(), account);

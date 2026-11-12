@@ -108,7 +108,6 @@ contract ImmutableClaimOperator {
         }
     }
 
-    // An entry is given `entryGas`: a call can pass on 63/64 of the gas left, less what is kept to go on after it.
     function _try(
         uint256 tokenId,
         address votingRewardsManager,
@@ -119,6 +118,7 @@ contract ImmutableClaimOperator {
     ) private {
         uint256 passable = gasleft();
         passable = passable > RESERVED_GAS ? passable - RESERVED_GAS : 0;
+        // A call passes on at most 63/64 of the gas left.
         if (passable - passable / 64 < entryGas) revert InsufficientGas();
         try this.claimEntry{gas: entryGas}(tokenId, votingRewardsManager, fees, programId, maxCheckpoints) {}
         catch {

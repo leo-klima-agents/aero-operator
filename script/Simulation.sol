@@ -5,7 +5,7 @@ import {ImmutableClaimOperatorFactory} from "../src/ImmutableClaimOperatorFactor
 import {ILeafVoter} from "../src/interfaces/ILeafVoter.sol";
 import {Discovery} from "./Discovery.sol";
 
-// Runs inside one eth_call on a live node, placed at an address by a state override: see script/simulate.sh.
+// Runs in an eth_call, at an address given by a state override. See simulate.sh.
 contract Simulation {
     enum Outcome {
         Reverted,
@@ -23,12 +23,11 @@ contract Simulation {
 
     error LeftBehind(address token, address account, uint256 amount);
 
-    // The recipient's clone, for the factory this contract deploys first in a call.
     function operatorOf(Deployment calldata dep, address recipient) external returns (address) {
         return _factory(dep).operatorOf(recipient);
     }
 
-    // What Aero's own route pays the recipient, with this contract as the stake's operator.
+    // What Aero's own route pays, with this contract as the stake's operator.
     function direct(address leafVoter, uint256 tokenId, address recipient, uint256 limit)
         external
         returns (uint256[] memory)
@@ -39,8 +38,7 @@ contract Simulation {
         return Discovery.gained(claims.tokens, recipient, before);
     }
 
-    // The same claim through the recipient's clone, as the stake's operator, in calls of `chunk` entries that each
-    // get `gas`, compared with what `direct` paid. `mostGas` is what the heaviest call used.
+    // The same claim through the clone, as the stake's operator, in calls of `chunk` entries with `gas` each.
     function attempt(
         Deployment calldata dep,
         uint256 tokenId,
@@ -77,8 +75,7 @@ contract Simulation {
         bool inFull = true;
         bool nothing = true;
         for (uint256 i; i < expected.length; ++i) {
-            // The recipient and the fee recipient share what Aero's own route pays, the fee being 1% of each
-            // payment, rounded down.
+            // The fee is 1% of each payment, rounded down.
             if (
                 paid[i] + taken[i] != expected[i] || taken[i] > expected[i] / 100
                     || taken[i] + 2 * entries < expected[i] / 100
@@ -96,7 +93,7 @@ contract Simulation {
         return new ImmutableClaimOperatorFactory(dep.leafVoter, dep.escrow, dep.baseChainId, dep.feeRecipient);
     }
 
-    // Entries `from` to `from + chunk` of the claims, counting the fees first.
+    // Entries `from` to `from + chunk`, fees first.
     function _slice(Discovery.Claims memory claims, uint256 from, uint256 chunk)
         private
         pure

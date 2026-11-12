@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-# Simulates, in eth_calls on a live node, claims of a real stake's rewards through its recipient's clone, and checks
-# them against the same claim sent by Aero's own route. Nothing is sent. It covers what Foundry's fork cannot run:
-# tokens that live in the node, such as Base's native tokens and Arc's USDC, and the node's own gas rules.
-#
+# Checks claims through a clone against Aero's own route, in eth_calls on a live node. Sends nothing.
 # usage: script/simulate.sh <rpc-url> <token-id> [max-gauges] [entry-gas] [entries-per-call]
-# Off Base, where any address can be the recipient, RECIPIENT chooses it.
+# Off Base, RECIPIENT sets the recipient.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -14,14 +11,13 @@ ID=${2:?$USAGE}
 LIMIT=${3:-0}
 ENTRY_GAS=${4:-1000000}
 CHUNK=${5:-12}
-# What Base and Ethereum allow a transaction.
+# Base's and Ethereum's limit per transaction.
 TRANSACTION_GAS=16777216
-# How many gauges the gas rules are tried on, the gas that is too little for any entry, and a number of entries per
-# call that puts them all in one.
+# The gauges the gas rules are tried on, too little gas for any entry, and enough entries per call for one call.
 FEW=2
 STARVED=10000
 ALL=1000000
-# Simulation's outcomes.
+# Simulation.Outcome
 REVERTED=0
 PAID_IN_FULL=1
 PAID_NOTHING=3
@@ -36,7 +32,7 @@ FEE=$(jq -j .deployment.feeRecipient "$HASHES")
 DEP="($LEAF,$ESCROW,$BASE_ID,$FEE)"
 DEP_TYPE='(address,address,uint256,address)'
 SIM=0x0000000000000000000000000000000000515151
-# The slot of LeafVoter's `tokenStates`, whose first word holds the operator in its low 20 bytes.
+# LeafVoter's `tokenStates` slot. The operator is the low 20 bytes of its first word.
 TOKEN_STATES_SLOT=10
 
 BLOCK=$(cast block-number --rpc-url "$RPC")
@@ -69,14 +65,13 @@ seen=$(cast call "$LEAF" 'operator(uint256)(address)' "$ID" --rpc-url "$RPC" --b
   --override-state-diff "$(as_operator "$operator")")
 [ "$seen" = "$operator" ] || { echo "LeafVoter does not keep operators in slot $TOKEN_STATES_SLOT" >&2; exit 1; }
 
-# What Aero's own route pays for the stake's first gauges, all of them if the number is 0.
+# What Aero's own route pays for the first $1 gauges, all if 0.
 direct() {
   call 'direct(address,uint256,address,uint256)(uint256[])' "$LEAF" "$ID" "$RECIPIENT" "$1" \
     --override-state-diff "$(as_operator "$SIM")" --json | jq -c '.[0]' | tr -d '"'
 }
 
-# Claims through the clone, the entries of the first $1 gauges getting $2 gas each, in calls of $3 entries that get
-# $4 gas: the outcome, the entries, the calls, the gas of the heaviest call and the programs it could not read.
+# Claims the first $1 gauges through the clone: $2 gas per entry, $3 entries per call, $4 gas per call.
 attempt() {
   call "attempt($DEP_TYPE,uint256,address,uint256,uint256,uint256,uint256,uint256[])(uint8,uint256,uint256,uint256,uint256)" \
     "$DEP" "$ID" "$RECIPIENT" "$1" "$2" "$3" "$4" "$5" --override-state-diff "$(as_operator "$operator")" --json
@@ -95,8 +90,7 @@ echo "the clone paid the same, less the fee, and kept nothing: $(jq -j '.[1]' <<
 unread=$(jq -j '.[4]' <<<"$result")
 [ "$unread" = 0 ] || echo "warning: $unread incentive programs were too old to read or could not be estimated"
 
-# The node's gas rules, on the first gauges: an entry without enough gas fails alone, and the claim either reverts or
-# pays in full, whatever gas it is sent with.
+# The node's gas rules: starved entries fail alone, and a claim reverts or pays in full whatever its gas.
 few=$(direct "$FEW")
 [ "$(outcome "$STARVED" 5000000)" = "$PAID_NOTHING" ] || { echo "starved entries did not all fail alone" >&2; exit 1; }
 low=0

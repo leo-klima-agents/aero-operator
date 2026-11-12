@@ -13,7 +13,7 @@ contract Deploy is Script {
     uint256 public constant BASE_CHAIN_ID = 8453;
     address public constant FEE_RECIPIENT = 0x450c72de8c0079B49AcedF294a13011bd09D125B;
 
-    string public constant SALT_PREIMAGE = "metadex.cafe/ImmutableClaimOperatorFactory/v1";
+    string public constant SALT_PREIMAGE = "aero-operator/ImmutableClaimOperatorFactory/v1";
     bytes32 public constant SALT = keccak256(bytes(SALT_PREIMAGE));
 
     function constructorArgs() public pure returns (bytes memory) {
@@ -34,7 +34,7 @@ contract Deploy is Script {
 
     function run() external returns (address deployed) {
         require(CREATE2_FACTORY.code.length != 0, "CREATE2 deployer not present");
-        // Reverts with the constructor's own error where the chain lacks what the contracts need.
+        // Reverts where the fee Safe is missing.
         new ImmutableClaimOperator(LEAF_VOTER, ESCROW, BASE_CHAIN_ID, FEE_RECIPIENT);
         deployed = predict();
         console.log("ImmutableClaimOperatorFactory", deployed);
