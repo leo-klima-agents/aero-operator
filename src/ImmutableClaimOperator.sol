@@ -20,7 +20,7 @@ contract ImmutableClaimOperator {
     bool private transient locked;
 
     event Claimed(uint256 indexed tokenId, address indexed token, uint256 amount, uint256 fee);
-    event ClaimFailed(uint256 indexed tokenId, address indexed votingRewardsManager, uint256 indexed programId);
+    event ClaimFailed(uint256 indexed tokenId, address indexed votingRewardsManager, bool fees, uint256 programId);
 
     error NoCode(address account);
     error NotClone();
@@ -93,6 +93,8 @@ contract ImmutableClaimOperator {
         uint256 programId,
         uint256 maxCheckpoints
     ) external onlySelf {
+        // Already so in a claim. Lets an entry be simulated alone, in a call from the clone's own address.
+        locked = true;
         address registry = ILeafVoter(leafVoter).FACTORY_REGISTRY();
         if (IFactoryRegistry(registry).rewardsToGauge(votingRewardsManager) == address(0)) {
             revert NotRegistered(votingRewardsManager);
@@ -133,7 +135,7 @@ contract ImmutableClaimOperator {
         try this.claimEntry{gas: entryGas}(tokenId, votingRewardsManager, fees, programId, maxCheckpoints) {}
         catch {
             // forge-lint: disable-next-line(reentrancy-events)
-            emit ClaimFailed(tokenId, votingRewardsManager, programId);
+            emit ClaimFailed(tokenId, votingRewardsManager, fees, programId);
         }
     }
 

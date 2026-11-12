@@ -13,8 +13,8 @@ There are two contracts, both without an owner, settings or an upgrade path:
   addresses.
 
 They are not deployed yet. On every chain where Aero's LeafVoter is at `0x382409fad8503FbCdbB27A4211551fa03e884078`
-and the fee Safe exists, the factory will be at `0x88F46265849b2d5b1b5f225c5Da78025D1d59452` and the
-`ImmutableClaimOperator` that the clones run at `0xE2bdd11e230C3dAeCeb7681E4eaD172bD657D66B`. A recipient's clone has
+and the fee Safe exists, the factory will be at `0xA3A48b8470B873650AA05e4A1101c160a5c5D6B7` and the
+`ImmutableClaimOperator` that the clones run at `0xA6889652fd2b1bfD6586bE847a4003D8279e8D4b`. A recipient's clone has
 the same address on all of them.
 
 ## How it works
@@ -61,8 +61,8 @@ from, and incentive programs to claim. The clone makes each entry its own claim:
    forwards its native balance instead.
 
 If any step of an entry fails, the whole entry is undone: its rewards stay in the rewards manager, the clone emits
-`ClaimFailed(tokenId, votingRewardsManager, programId)`, with `programId` 0 for fees, and carries on with the next
-entry. So a token that can't be sent to the recipient or the fee Safe doesn't block the others, and the clone holds
+`ClaimFailed(tokenId, votingRewardsManager, fees, programId)`, with `fees` true and `programId` 0 for a fee claim,
+and carries on with the next entry. So a token that can't be sent to the recipient or the fee Safe doesn't block the others, and the clone holds
 nothing once `claim` returns.
 
 `entryGas` is the gas each entry may use, the clone's own call included. Before an entry, `claim` reverts with
@@ -119,15 +119,14 @@ still owe it rewards: on the manager of every gauge the stake has been allocated
 
 Choose `entryGas` well above what the heaviest entry uses. The first claim of a stake's fees from a manager is the
 heaviest: in the fork tests such an entry used up to about 680,000 gas on Base, and between 600,000 and 700,000 on
-Ethereum, while an incentive entry used about 300,000. With 500,000, 14 of the 15 fee entries on Base failed; with
-700,000, none did. The tests pass with 3,000,000 on every chain. An entry that needs more than `entryGas` fails and
-can be claimed again with more.
+Ethereum, while an incentive entry used about 300,000. The Base and Ethereum fork tests check that no entry fails
+with 700,000 and that some do with 500,000, and every chain's tests run with 1,000,000. An entry that needs more
+than `entryGas` fails and can be claimed again with more.
 
-`ClaimFailed` doesn't say why an entry failed. To find out, trace a simulated claim, or simulate the clone's
+`ClaimFailed` doesn't say why an entry failed. To find out, simulate the clone's
 `claimEntry(tokenId, votingRewardsManager, fees, programId, maxCheckpoints)` in an `eth_call` from the clone's own
 address: it reverts with the reason, such as `NotRegistered(votingRewardsManager)`, `TransferFailed(token)` or the
-LeafVoter's `NotAuthorized()` when the clone is not the stake's operator. That call can't show an entry that pays
-native tokens, which a clone accepts only during a claim.
+LeafVoter's `NotAuthorized()` when the clone is not the stake's operator.
 
 The gas limit has to cover `entryGas` once more than the claim uses: before its last entry, the clone needs
 `entryGas × 64 / 63 + 20,000` left, and through the factory 64/63 of that. With less, the whole claim reverts with
@@ -144,6 +143,8 @@ and Ethereum accept at most 16,777,216 gas per transaction, so split a long list
   address, and setting the operators again.
 - The clones are only as safe as Aero's contracts. The LeafVoter has no proxy, but Aero's governance holds roles on it,
   and a clone claims from whatever rewards managers Aero's `FACTORY_REGISTRY` lists.
+- The gas check relies on a call passing on 63/64 of the gas left and on 20,000 gas covering what follows a failed
+  entry. `script/simulate.sh` checks both on each chain's own node.
 - Whoever calls `claim` chooses the gas each entry gets. On Base, nothing between a rewards manager's fee claim and
   the pool catches a failure, in either kind of gauge or any of the three kinds of pool, so an entry given too little
   fails whole. A gauge or pool that did catch one could be made to skip that step.
@@ -188,8 +189,8 @@ yet.
 
 | | |
 |---|---|
-| Factory | `0x88F46265849b2d5b1b5f225c5Da78025D1d59452` |
-| `ImmutableClaimOperator` | `0xE2bdd11e230C3dAeCeb7681E4eaD172bD657D66B`, created by the factory's constructor |
+| Factory | `0xA3A48b8470B873650AA05e4A1101c160a5c5D6B7` |
+| `ImmutableClaimOperator` | `0xA6889652fd2b1bfD6586bE847a4003D8279e8D4b`, created by the factory's constructor |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
 | Base's chain id | 8453 |
@@ -216,9 +217,9 @@ Deployment steps, for each chain:
 ```
 forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --ledger
 ARGS=$(jq -j .deployment.constructorArgs verification/bytecode-hashes.json)
-forge verify-contract 0x88F46265849b2d5b1b5f225c5Da78025D1d59452 src/ImmutableClaimOperatorFactory.sol:ImmutableClaimOperatorFactory \
+forge verify-contract 0xA3A48b8470B873650AA05e4A1101c160a5c5D6B7 src/ImmutableClaimOperatorFactory.sol:ImmutableClaimOperatorFactory \
   --rpc-url $RPC_URL --constructor-args $ARGS --license-type MIT --watch
-forge verify-contract 0xE2bdd11e230C3dAeCeb7681E4eaD172bD657D66B src/ImmutableClaimOperator.sol:ImmutableClaimOperator \
+forge verify-contract 0xA6889652fd2b1bfD6586bE847a4003D8279e8D4b src/ImmutableClaimOperator.sol:ImmutableClaimOperator \
   --rpc-url $RPC_URL --constructor-args $ARGS --license-type MIT --watch
 ```
 
@@ -228,9 +229,9 @@ To check that the deployed contracts are this repository's code, compare their c
 `verification/bytecode-hashes.json`, which `script/check-verification.sh` checks against a build of this repository:
 
 ```
-cast keccak $(cast code 0x88F46265849b2d5b1b5f225c5Da78025D1d59452 --rpc-url $RPC_URL)
+cast keccak $(cast code 0xA3A48b8470B873650AA05e4A1101c160a5c5D6B7 --rpc-url $RPC_URL)
 jq -j .deployment.factoryRuntimeKeccak verification/bytecode-hashes.json
-cast keccak $(cast code 0xE2bdd11e230C3dAeCeb7681E4eaD172bD657D66B --rpc-url $RPC_URL)
+cast keccak $(cast code 0xA6889652fd2b1bfD6586bE847a4003D8279e8D4b --rpc-url $RPC_URL)
 jq -j .deployment.implementationRuntimeKeccak verification/bytecode-hashes.json
 ```
 
@@ -257,11 +258,20 @@ You need [Foundry](https://getfoundry.sh). The fork tests also need archive RPCs
   say, with the same claim sent by Aero's own route. Where the fee Safe is not deployed yet, a copy of its proxy
   stands in for it; where the Safe's singleton is missing too, as on Elysium, a contract that only accepts payments.
 - Some tokens run in the node itself, which Foundry's fork can't do: Base's native tokens, whose code is `0xef`, and
-  Arc's USDC. The Base fork tests leave out the rewards managers that pay them, and Arc has no fork tests.
-- `script/simulate.sh <rpc-url> <token-id> [max-gauges] [entry-gas]` covers those tokens. In `eth_call`s on a live node, with
-  state overrides and nothing sent, it deploys the factory, makes the recipient's clone the stake's operator, claims
-  everything the stake is owed by the gauges it is allocated to and checks it against Aero's own route. It needs a
-  node that accepts state overrides. Off Base, `RECIPIENT` chooses the recipient.
+  Arc's USDC. The Base fork tests leave out the rewards managers that pay them, and Arc has no fork tests. A fork
+  also runs on Foundry's gas rules, not the chain's.
+- `script/simulate.sh <rpc-url> <token-id> [max-gauges] [entry-gas] [entries-per-call]` covers both, on the node
+  itself. In `eth_call`s with state overrides, and nothing sent, it deploys the factory, makes the recipient's clone
+  the stake's operator, and:
+  - claims everything the stake is owed by the gauges it is allocated to, in calls of 12 entries that each get the
+    16,777,216 gas of a transaction, and checks the total against Aero's own route;
+  - gives each entry of the first two gauges 10,000 gas and checks that they all fail alone;
+  - searches for the least gas at which a claim of those gauges goes through, and checks that every attempt either
+    reverts or pays in full.
+
+  It passes on all eight chains. It needs a node that accepts state overrides, and it says how many incentive
+  programs it could not read. Off Base, `RECIPIENT` chooses the recipient. Calls made one after another in one
+  `eth_call` share what the first ones touched, so each uses a little less gas than a transaction of its own would.
 - `script/check-verification.sh` checks that `verification/` and this file's addresses match the build.
 - `script/refresh-verification.sh` regenerates `verification/` after a change to the source or the deploy script.
 

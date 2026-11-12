@@ -59,7 +59,7 @@ contract OperatorTest is Test {
     address internal feeRecipient;
 
     event Claimed(uint256 indexed tokenId, address indexed token, uint256 amount, uint256 fee);
-    event ClaimFailed(uint256 indexed tokenId, address indexed votingRewardsManager, uint256 indexed programId);
+    event ClaimFailed(uint256 indexed tokenId, address indexed votingRewardsManager, bool fees, uint256 programId);
 
     function setUp() public {
         feeRecipient = address(new MockSafe());
@@ -123,7 +123,7 @@ contract OperatorTest is Test {
 
     function _expectFailed(address emitter, address manager, uint256 programId) internal {
         vm.expectEmit(emitter);
-        emit ClaimFailed(ID, manager, programId);
+        emit ClaimFailed(ID, manager, programId == 0, programId);
     }
 
     function _none() internal pure returns (ILeafVoter.IncentiveClaim[] memory) {
@@ -560,6 +560,39 @@ contract OperatorTest is Test {
         operator.claimEntry(ID, address(pair), false, 1, 500);
     }
 
+    function testFuzz_recipient_isTheOneTheCloneWasMadeFor(address account) public {
+        ImmutableClaimOperator clone = ImmutableClaimOperator(payable(factory.operatorOf(account)));
+
+        factory.claim(account, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+
+        assertEq(clone.recipient(), account);
+        assertEq(
+            address(clone).code,
+            abi.encodePacked(
+                hex"363d3d373d3d3d363d73", factory.implementation(), hex"5af43d82803e903d91602b57fd5bf3", account
+            )
+        );
+    }
+
+    function test_recipient_withZeroBytesAtEitherEnd() public {
+        address[3] memory accounts = [address(0), address(uint160(0xff)), address(uint160(0xff) << 152)];
+        for (uint256 i; i < accounts.length; ++i) {
+            factory.claim(accounts[i], ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+            assertEq(ImmutableClaimOperator(payable(factory.operatorOf(accounts[i]))).recipient(), accounts[i]);
+        }
+    }
+
+    function test_claimEntry_simulatedFromTheClone_paysNativeTokensToo() public {
+        factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+        _owe(native, 1 ether, 3e6);
+
+        vm.prank(address(operator));
+        operator.claimEntry(ID, address(native), true, 0, 500);
+
+        assertEq(recipient.balance, 0.99 ether);
+        assertEq(usdc.balanceOf(recipient), 2.97e6);
+    }
+
     function test_claimEntry_simulatedFromTheClone_givesTheReason() public {
         factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
         MockRewardsManager rogue = new MockRewardsManager(address(voter), address(aero), address(usdc), address(weth));
@@ -635,7 +668,8 @@ contract OperatorTest is Test {
     function test_claim_anIncentiveForProgram0_isNotAFeeClaim() public {
         _owe(pair, 1e18, 2e6);
 
-        _expectFailed(address(operator), address(pair), 0);
+        vm.expectEmit(address(operator));
+        emit ClaimFailed(ID, address(pair), false, 0);
         factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _incentive(pair, 0), ENTRY_GAS);
 
         assertEq(aero.balanceOf(recipient), 0);

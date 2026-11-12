@@ -33,11 +33,13 @@ library Discovery {
         ILeafVoter.IncentiveClaim[] incentives;
         address[] tokens;
         address wrappedNative;
+        uint256 unread;
     }
 
     // The fees of every gauge the stake is allocated to, up to `limit` gauges if it is not 0, and of each gauge's
-    // newest programs, those that owe the stake. A gauge the stake has left is not found. With `forkable`, what pays
-    // a token that runs in the node itself is left out: Base's native tokens, whose code is 0xef.
+    // newest programs, those that owe the stake. A gauge the stake has left is not found, and `unread` counts the
+    // programs that are too old to be read or whose estimate reverts. With `forkable`, what pays a token that runs in
+    // the node itself is left out: Base's native tokens, whose code is 0xef.
     function claims(address leafVoter, uint256 tokenId, uint256 limit, bool forkable)
         internal
         view
@@ -66,8 +68,14 @@ library Discovery {
 
             IVotingRewardsManagerViews views = IVotingRewardsManagerViews(address(manager));
             uint256 last = views.incentiveCount();
+            if (last > MAX_PROGRAMS) found.unread += last - MAX_PROGRAMS;
             for (uint256 id = last > MAX_PROGRAMS ? last - MAX_PROGRAMS + 1 : 1; id <= last; ++id) {
-                if (views.earnedIncentives(tokenId, id, MAX_CHECKPOINTS) == 0) continue;
+                try views.earnedIncentives(tokenId, id, MAX_CHECKPOINTS) returns (uint256 earned) {
+                    if (earned == 0) continue;
+                } catch {
+                    ++found.unread;
+                    continue;
+                }
                 (address token,,,,,) = manager.incentive(id);
                 if (forkable && !_forkable(token)) continue;
                 incentives[programs++] = ILeafVoter.IncentiveClaim(address(manager), id, MAX_CHECKPOINTS);

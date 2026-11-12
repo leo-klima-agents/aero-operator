@@ -37,9 +37,9 @@ interface IVotingEscrowExtra {
 }
 
 abstract contract ForkTest is Test {
-    uint256 internal constant ENTRY_GAS = 3_000_000;
+    uint256 internal constant ENTRY_GAS = 1_000_000;
     bytes32 internal constant CLAIMED = keccak256("Claimed(uint256,address,uint256,uint256)");
-    bytes32 internal constant CLAIM_FAILED = keccak256("ClaimFailed(uint256,address,uint256)");
+    bytes32 internal constant CLAIM_FAILED = keccak256("ClaimFailed(uint256,address,bool,uint256)");
     // The fee Safe's proxy as deployed on Base, and the Safe 1.5.0 singleton it points to.
     address internal constant SAFE_SINGLETON = 0xEdd160fEBBD92E350D4D398fb636302fccd67C7e;
     bytes internal constant SAFE_PROXY_CODE =
@@ -102,6 +102,7 @@ abstract contract ForkTest is Test {
     function _discover() internal {
         Discovery.Claims memory claims = Discovery.claims(address(leaf), _stake(), 0, true);
         assertGt(claims.fees.length, 0, "the stake has nothing to claim on this chain at this block");
+        assertEq(claims.unread, 0, "some incentive programs could not be read");
         for (uint256 i; i < claims.fees.length; ++i) {
             feeClaims.push(claims.fees[i]);
         }
@@ -127,6 +128,22 @@ abstract contract ForkTest is Test {
         factory.claim(recipient, _stake(), feeClaims, incentiveClaims, ENTRY_GAS);
         claimGas = gas - gasleft();
         return vm.getRecordedLogs();
+    }
+
+    // How many entries of a first claim fail when each is given `entryGas`.
+    function _failuresWith(uint256 entryGas) internal returns (uint256 failures) {
+        uint256 snapshot = vm.snapshotState();
+        vm.recordLogs();
+        factory.claim(recipient, _stake(), feeClaims, incentiveClaims, entryGas);
+        failures = _count(vm.getRecordedLogs(), CLAIM_FAILED);
+        vm.revertToState(snapshot);
+    }
+
+    // The README's advice on `entryGas`, for a stake whose fees have never been claimed.
+    function _checkWhatAFirstFeeClaimNeeds() internal {
+        _setOperator(address(operator));
+        assertEq(_failuresWith(700_000), 0);
+        assertGt(_failuresWith(500_000), 0);
     }
 
     function _count(Vm.Log[] memory logs, bytes32 topic) internal view returns (uint256 count) {
@@ -338,6 +355,10 @@ contract BaseForkTest is ForkTest {
         return 1e15;
     }
 
+    function test_claim_aFirstFeeClaimNeedsMoreThan500000Gas() public {
+        _checkWhatAFirstFeeClaimNeeds();
+    }
+
     function test_theOwnerIsASmartWallet() public view {
         assertGt(recipient.code.length, 0);
     }
@@ -457,6 +478,10 @@ contract EthereumForkTest is LeafForkTest {
         return 1e15;
     }
 
+    function test_claim_aFirstFeeClaimNeedsMoreThan500000Gas() public {
+        _checkWhatAFirstFeeClaimNeeds();
+    }
+
     function test_claim_aTokenTheRecipientCannotReceive_failsAloneAndStaysClaimable() public {
         _setOperator(address(operator));
         vm.prank(USDC.blacklister());
@@ -489,7 +514,7 @@ contract OptimismForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 159_419_700;
+        return 159_438_100;
     }
 
     function _chainId() internal pure override returns (uint256) {
@@ -503,7 +528,7 @@ contract ArbitrumForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 523_406_900;
+        return 523_523_300;
     }
 
     function _chainId() internal pure override returns (uint256) {
@@ -517,7 +542,7 @@ contract InkForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 60_939_900;
+        return 60_976_600;
     }
 
     function _chainId() internal pure override returns (uint256) {
@@ -531,7 +556,7 @@ contract RobinhoodForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 112_071_600;
+        return 112_417_100;
     }
 
     function _chainId() internal pure override returns (uint256) {
@@ -545,7 +570,7 @@ contract ElysiumForkTest is LeafForkTest {
     }
 
     function _block() internal pure override returns (uint256) {
-        return 5_010_400;
+        return 5_255_800;
     }
 
     function _chainId() internal pure override returns (uint256) {
