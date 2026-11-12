@@ -82,8 +82,8 @@ The addresses are the same on every chain:
 
 | | |
 |---|---|
-| Factory | `0x0FcA341f092e7f8cCeBf0e8B52b5C6061eA46B57` |
-| `ImmutableClaimOperator` | `0x0D4f1242c62CC2f3a3a64f11f4d719F27810B0d5` |
+| Factory | `0x03Df720E4d113833bEe3aD65512f2118Bb83e32c` |
+| `ImmutableClaimOperator` | `0x1899d849C3Dd33afBA800db667cB1804206FdCcd` |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
 | Base's chain id | 8453 |
@@ -102,9 +102,9 @@ For each chain:
 ```
 forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --ledger
 ARGS=$(jq -j .deployment.constructorArgs verification/bytecode-hashes.json)
-forge verify-contract 0x0FcA341f092e7f8cCeBf0e8B52b5C6061eA46B57 src/ImmutableClaimOperatorFactory.sol:ImmutableClaimOperatorFactory \
+forge verify-contract 0x03Df720E4d113833bEe3aD65512f2118Bb83e32c src/ImmutableClaimOperatorFactory.sol:ImmutableClaimOperatorFactory \
   --rpc-url $RPC_URL --constructor-args $ARGS --license-type MIT --watch
-forge verify-contract 0x0D4f1242c62CC2f3a3a64f11f4d719F27810B0d5 src/ImmutableClaimOperator.sol:ImmutableClaimOperator \
+forge verify-contract 0x1899d849C3Dd33afBA800db667cB1804206FdCcd src/ImmutableClaimOperator.sol:ImmutableClaimOperator \
   --rpc-url $RPC_URL --constructor-args $ARGS --license-type MIT --watch
 ```
 
@@ -113,9 +113,9 @@ forge verify-contract 0x0D4f1242c62CC2f3a3a64f11f4d719F27810B0d5 src/ImmutableCl
 Compare the deployed code hashes with `verification/bytecode-hashes.json`:
 
 ```
-cast keccak $(cast code 0x0FcA341f092e7f8cCeBf0e8B52b5C6061eA46B57 --rpc-url $RPC_URL)
+cast keccak $(cast code 0x03Df720E4d113833bEe3aD65512f2118Bb83e32c --rpc-url $RPC_URL)
 jq -j .deployment.factoryRuntimeKeccak verification/bytecode-hashes.json
-cast keccak $(cast code 0x0D4f1242c62CC2f3a3a64f11f4d719F27810B0d5 --rpc-url $RPC_URL)
+cast keccak $(cast code 0x1899d849C3Dd33afBA800db667cB1804206FdCcd --rpc-url $RPC_URL)
 jq -j .deployment.implementationRuntimeKeccak verification/bytecode-hashes.json
 ```
 

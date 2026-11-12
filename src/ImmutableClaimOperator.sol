@@ -11,6 +11,7 @@ contract ImmutableClaimOperator {
     uint256 public constant FEE_BPS = 100;
     uint256 private constant CLONE_SIZE = 65;
     uint256 private constant RESERVED_GAS = 20_000;
+    uint256 private constant EIP150_DIVISOR = 64;
 
     address public immutable leafVoter;
     address public immutable escrow;
@@ -116,10 +117,10 @@ contract ImmutableClaimOperator {
         uint256 maxCheckpoints,
         uint256 entryGas
     ) private {
-        uint256 passable = gasleft();
-        passable = passable > RESERVED_GAS ? passable - RESERVED_GAS : 0;
-        // A call passes on at most 63/64 of the gas left.
-        if (passable - passable / 64 < entryGas) revert InsufficientGas();
+        uint256 spare = gasleft();
+        spare = spare > RESERVED_GAS ? spare - RESERVED_GAS : 0;
+        uint256 keptByCaller = spare / EIP150_DIVISOR;
+        if (spare - keptByCaller < entryGas) revert InsufficientGas();
         try this.claimEntry{gas: entryGas}(tokenId, votingRewardsManager, fees, programId, maxCheckpoints) {}
         catch {
             emit ClaimFailed(tokenId, votingRewardsManager, fees, programId);
