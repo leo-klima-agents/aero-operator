@@ -43,8 +43,9 @@ Neither contract has an owner, settings or an upgrade path:
   `FACTORY_REGISTRY` gives a gauge's rewards manager. A gauge the stake has left can still owe it rewards: its manager's
   `userRewardCheckpointIndex(tokenId)` is not 0. `earnedFees` and `earnedIncentives` on a manager estimate a claim.
 - **Entry gas.** A stake's first fee claim from a manager is the heaviest. `script/simulate.sh` prints what a stake's
-  first fee entry needs: 639,347 on Base and 858,955 on Arc on 2026-11-13. An entry that needs more than `entryGas`
-  fails and can be claimed again. One that needs less uses less, so a high `entryGas` only raises the gas limit.
+  first fee entry needs: between 632,732 on OP Mainnet and 858,955 on Arc on 2026-11-13. An entry that needs more than
+  `entryGas` fails and can be claimed again. One that needs less uses less, so a high `entryGas` only raises the gas
+  limit.
 - **Gas limit.** A claim through the factory reverts with less than
 
       I + F + g(P + g(U + 20,000 + g(entryGas)))        where g(x) = x + ⌊(x − 1) / 63⌋
@@ -59,9 +60,9 @@ Neither contract has an owner, settings or an upgrade path:
   | `U` | What the clone uses before its last entry, earlier entries included | 4,157, and 9,821 on Base |
 
   A claim sent to the clone needs `I + P + g(U + 20,000 + g(entryGas))`. The unit tests pin these numbers, and calls
-  bisected on Base and Arc matched to the unit. Arbitrum One, Robinhood Chain and Elysium also charge the limit for
-  posting the transaction's data, so use `eth_estimateGas` there. It finds a limit that goes through. Earlier entries
-  can use more by the time the transaction lands, up to `entryGas` each, so add a margin.
+  bisected on all eight chains matched to the unit. Arbitrum One, Robinhood Chain and Elysium also charge the limit
+  for posting the transaction's data, so use `eth_estimateGas` there. It finds a limit that goes through. Earlier
+  entries can use more by the time the transaction lands, up to `entryGas` each, so add a margin.
 - **Cost.** An entry costs about 60,000 gas more than through Aero's Voter. Base and Ethereum allow a transaction
   16,777,216 gas, so split long lists.
 - **Failures.** To learn why an entry fails, call the clone's
