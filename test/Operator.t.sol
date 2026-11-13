@@ -461,11 +461,12 @@ contract OperatorTest is Test {
         for (uint256 i; i < reentries.length; ++i) {
             (Reenterer reenterer,) = _reenterer(reentries[i]);
             _owe(wethPair, 1 ether, 0);
+            uint256 programId = _oweIncentive(wethPair, address(weth), 1 ether);
 
-            factory.claim(address(reenterer), TOKEN_ID, _fees(wethPair), _noIncentives(), ENTRY_GAS);
+            factory.claim(address(reenterer), TOKEN_ID, _fees(wethPair), _incentive(wethPair, programId), ENTRY_GAS);
 
             assertEq(bytes4(reenterer.reason()), ImmutableClaimOperator.Reentrancy.selector);
-            assertEq(address(reenterer).balance, 0.99 ether);
+            assertEq(address(reenterer).balance, 1.98 ether);
         }
     }
 
