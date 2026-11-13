@@ -92,10 +92,9 @@ Neither contract has an owner, settings or an upgrade path:
 ## Deployment
 
 Not deployed. The factory needs the fee Safe on the chain: its constructor reverts with `NoCode` otherwise. On
-2026-11-11 the Safe was only on Base. The constructor only checks for code, so check the Safe's owners and threshold
-on each chain.
+2026-11-13 the Safe was only on Base.
 
-| Chain | Id | LeafVoter | CREATE2 deployer | Fee Safe | Safe 1.5.0 singleton |
+| Chain | Id | LeafVoter | CREATE2 deployer | Fee Safe | Safe 1.5.0 contracts |
 |---|---|---|---|---|---|
 | Base | 8453 | yes | yes | yes | yes |
 | OP Mainnet | 10 | yes | yes | no | yes |
@@ -110,21 +109,35 @@ The addresses are the same on every chain:
 
 | | |
 |---|---|
-| Factory | `0x78D3585d43aA4bcd16D77484AAaeB6bf71e1817a` |
-| `ImmutableClaimOperator` | `0xa67Db58EAd132062a47F007676D38872667c8858` |
+| Factory | `0xd2aCe8497b3eEf32df10Dce2D49e26c365443837` |
+| `ImmutableClaimOperator` | `0xA669E8575B8e872219c0Cc6544b7c7b6114c9B80` |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
 | Base's chain id | 8453 |
-| Fee Safe | `0x450c72de8c0079B49AcedF294a13011bd09D125B`, a proxy to the Safe 1.5.0 singleton |
+| Fee Safe | `0x450c72de8c0079B49AcedF294a13011bd09D125B` |
 | Fee | 1%, fixed in the source |
 | Method | CREATE2 through `0x4e59b44847b379578588920cA78FbF26c0B4956C`, salt `keccak256("metadex.cafe/ImmutableClaimOperatorFactory/v1")` |
+
+### Fee Safe
+
+The fee Safe is a Safe 1.5.0 with three owners, two of which sign. The constructor only checks that it has code, and
+its owners can change it on each chain on their own, so check it on each chain: `script/fee-safe.sh $RPC_URL` compares
+its singleton, version, owners, threshold, guards and fallback handler with those it was created with, and lists its
+modules. On Base it has Safe's Allowance Module, which lets one delegate spend 10 USDC a week.
+
+Where the Safe is missing, the script prints the transaction that creates it. Anyone can send it: it is the
+`createProxyWithNonce` call that created the Safe on Base, and the address follows from the owners and the threshold,
+so no other Safe can take it. It needs Safe 1.5.0's proxy factory, both singletons, `SafeToL2Setup` and fallback
+handler, which Elysium lacks. The Safe uses the `SafeL2` singleton everywhere but on Ethereum.
+
+### Steps
 
 For each chain:
 
 1. Install Foundry v1.9.0 with `foundryup --install v1.9.0`. Another version can compile different bytecode.
 2. Run `forge test` with `BASE_RPC_URL` and `ETHEREUM_RPC_URL` set, then `script/check-verification.sh`.
-3. Run `script/simulate.sh $RPC_URL <token-id>` for a stake with rewards on the chain. Off Base, `RECIPIENT` sets the
-   recipient to simulate.
+3. Run `script/fee-safe.sh $RPC_URL`, then `script/simulate.sh $RPC_URL <token-id>` for a stake with rewards on the
+   chain. Off Base, `RECIPIENT` sets the recipient to simulate.
 4. Deploy. The script stops unless the build, and then the deployed code, match `verification/bytecode-hashes.json`:
 
 ```
@@ -169,10 +182,12 @@ A clone's code is `0x363d3d373d3d3d363d73`, the `ImmutableClaimOperator`'s addre
   a live node that takes state overrides in `eth_call`, with the recorded code deployed the recorded way, and checks
   the node's gas rules. It covers what a fork can't run: Base's native tokens, Arc's USDC and each chain's own gas
   rules. It passes on all eight chains.
+- `script/fee-safe.sh <rpc-url>` checks the fee Safe on a chain, or prints how to create it there.
 - `script/check-verification.sh` checks `verification/` and this file's addresses against the build.
   `script/refresh-verification.sh` regenerates `verification/`.
 
-The contracts compile with solc 0.8.38 for `prague`, via-IR, with 1,000,000 optimizer runs.
+The contracts compile with solc 0.8.38 for `osaka`, via-IR, with 1,000,000 optimizer runs. All eight chains run
+`osaka`, and the code is the same as for `prague` but for its metadata hash.
 
 ## License
 
