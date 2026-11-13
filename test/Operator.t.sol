@@ -18,8 +18,8 @@ import {
 
 uint256 constant ENTRY_GAS = 1_000_000;
 uint256 constant RESERVED_GAS = 20_000;
-uint256 constant USED_BY_THE_FACTORY = 4371;
-uint256 constant USED_TO_DEPLOY_A_CLONE = 45_094;
+uint256 constant USED_BY_THE_FACTORY = 4406;
+uint256 constant USED_TO_DEPLOY_A_CLONE = 45_079;
 uint256 constant USED_BY_THE_PROXY = 2624;
 uint256 constant USED_BEFORE_ONE_FEE_ENTRY = 4157;
 
@@ -638,6 +638,29 @@ contract OperatorTest is Test {
 
         assertEq(usdc.balanceOf(recipient), 9.9e6);
         assertEq(usdc.balanceOf(feeRecipient), 0.1e6);
+    }
+
+    function test_sweep_throughTheFactory_deploysTheClone() public {
+        usdc.mint(address(operator), 10e6);
+        vm.chainId(BASE);
+        vm.expectRevert(ImmutableClaimOperator.NotOwner.selector);
+        factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+        assertEq(address(operator).code.length, 0);
+
+        vm.prank(makeAddr("anyone"));
+        factory.sweep(recipient, address(usdc));
+
+        assertEq(operator.recipient(), recipient);
+        assertEq(usdc.balanceOf(recipient), 9.9e6);
+        assertEq(usdc.balanceOf(feeRecipient), 0.1e6);
+        factory.sweep(recipient, address(usdc));
+    }
+
+    function test_sweep_ofAnAddressWithoutCode_reverts() public {
+        vm.expectRevert();
+        factory.sweep(recipient, makeAddr("no code"));
+
+        assertEq(address(operator).code.length, 0);
     }
 
     function test_sweep_paysNothingIfATransferFails() public {

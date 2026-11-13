@@ -18,6 +18,18 @@ contract ImmutableClaimOperatorFactory {
         ILeafVoter.IncentiveClaim[] calldata incentiveClaims,
         uint256 entryGas
     ) external {
+        _deployed(recipient).claim(tokenId, feeClaims, incentiveClaims, entryGas);
+    }
+
+    function sweep(address recipient, address token) external {
+        _deployed(recipient).sweep(token);
+    }
+
+    function operatorOf(address recipient) external view returns (address) {
+        return _predict(_initCode(recipient));
+    }
+
+    function _deployed(address recipient) private returns (ImmutableClaimOperator) {
         bytes memory initCode = _initCode(recipient);
         address operator = _predict(initCode);
         if (operator.code.length == 0) {
@@ -25,11 +37,7 @@ contract ImmutableClaimOperatorFactory {
                 pop(create2(0, add(initCode, 0x20), mload(initCode), 0))
             }
         }
-        ImmutableClaimOperator(payable(operator)).claim(tokenId, feeClaims, incentiveClaims, entryGas);
-    }
-
-    function operatorOf(address recipient) external view returns (address) {
-        return _predict(_initCode(recipient));
+        return ImmutableClaimOperator(payable(operator));
     }
 
     function _predict(bytes memory initCode) private view returns (address) {

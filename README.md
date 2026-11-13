@@ -27,10 +27,12 @@ Neither contract has an owner, settings or an upgrade path:
   the recipient. A manager pays its `wrappedNative` token in native tokens, and the clone forwards those.
 - An entry that fails is undone: its rewards stay in the rewards manager, the clone emits
   `ClaimFailed(tokenId, votingRewardsManager, fees, programId)` and goes on. For each token it forwards, it emits
-  `Claimed(tokenId, token, amount, fee)`: `token` is the wrapped token for native tokens, and `amount` is all the clone
-  held, fee included.
-- `sweep(token)` on a clone sends the clone's balance of a token the same way, or its native tokens for the zero
-  address, and emits `Swept(token, amount, fee)`. Anyone can call it.
+  `Claimed(tokenId, token, amount, fee)`: `token` is the wrapped token for native tokens, where `Swept` has the zero
+  address, and `amount` is all the clone held, fee included.
+- `sweep(recipient, token)` on the factory deploys the clone if it has no code, then calls the clone's `sweep(token)`.
+  Anyone can call either. The clone sends its balance of the token the same way, or its native tokens for the zero
+  address, and emits `Swept(token, amount, fee)`. A token can be any contract, so `Swept` proves a payment only for a
+  token that is known.
 - Each entry gets `entryGas`. `claim` reverts with `InsufficientGas` unless it can pass that much on and keep 20,000
   to go on. So a claim never succeeds with an entry that failed for lack of gas in the transaction.
 - On Base, `claim` reverts with `NotOwner` unless the recipient owns the stake. Other chains can't tell, and a stake
@@ -55,7 +57,7 @@ Neither contract has an owner, settings or an upgrade path:
   | | | For one fee entry |
   |---|---|---|
   | `I` | The transaction's intrinsic gas | 21,000 plus 4 per zero byte and 16 per other byte of calldata |
-  | `F` | What the factory uses before it calls the clone | 4,371, and 45,094 more when it deploys the clone |
+  | `F` | What the factory uses before it calls the clone | 4,406, and 45,079 more when it deploys the clone |
   | `P` | What the clone's proxy uses: `2,624 + 6w + ⌊w² / 512⌋` for `w` 32-byte words of calldata to the clone | 2,678 |
   | `U` | What the clone uses before its last entry, earlier entries included | 4,157, and 9,821 on Base |
 
@@ -108,8 +110,8 @@ The addresses are the same on every chain:
 
 | | |
 |---|---|
-| Factory | `0xcBca701052A835095060A5F37FbA137E3A698Ea4` |
-| `ImmutableClaimOperator` | `0x39424E431AE15b816544C724BA34bB95600a8225` |
+| Factory | `0x78D3585d43aA4bcd16D77484AAaeB6bf71e1817a` |
+| `ImmutableClaimOperator` | `0xa67Db58EAd132062a47F007676D38872667c8858` |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
 | Base's chain id | 8453 |
