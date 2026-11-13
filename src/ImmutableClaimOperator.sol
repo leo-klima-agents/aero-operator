@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.38;
 
+import {IArbSys} from "./interfaces/IArbSys.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IFactoryRegistry} from "./interfaces/IFactoryRegistry.sol";
 import {ILeafVoter} from "./interfaces/ILeafVoter.sol";
@@ -13,6 +14,7 @@ contract ImmutableClaimOperator {
     uint256 private constant RESERVED_GAS = 20_000;
     uint256 private constant EIP150_DIVISOR = 64;
     address private constant NATIVE = address(0);
+    address private constant ARB_SYS = address(100);
 
     address public immutable leafVoter;
     address public immutable escrow;
@@ -73,8 +75,9 @@ contract ImmutableClaimOperator {
     }
 
     function sweep(address token) external nonReentrant {
-        (uint256 amount, uint256 fee) = _pay(recipient(), token);
-        if (amount != 0) emit Swept(token, amount, fee);
+        address account = recipient();
+        uint256 amount = _balance(token);
+        if (amount != 0) emit Swept(token, amount, _pay(account, token, amount));
     }
 
     function claimEntry(
@@ -89,21 +92,22 @@ contract ImmutableClaimOperator {
         if (IFactoryRegistry(registry).rewardsToGauge(votingRewardsManager) == address(0)) {
             revert NotRegistered(votingRewardsManager);
         }
+        IVotingRewardsManager manager = IVotingRewardsManager(votingRewardsManager);
+        address wrappedNative = manager.wrappedNative();
+        address token0 = fees ? manager.token0() : manager.incentive(programId);
+        address token1 = fees ? manager.token1() : address(0);
+        uint256 held0 = _held(token0, wrappedNative);
+        uint256 held1 = _held(token1, wrappedNative);
+
         ILeafVoter.FeeClaim[] memory feeClaims = new ILeafVoter.FeeClaim[](fees ? 1 : 0);
         ILeafVoter.IncentiveClaim[] memory incentiveClaims = new ILeafVoter.IncentiveClaim[](fees ? 0 : 1);
         if (fees) feeClaims[0] = ILeafVoter.FeeClaim(votingRewardsManager, maxCheckpoints);
         else incentiveClaims[0] = ILeafVoter.IncentiveClaim(votingRewardsManager, programId, maxCheckpoints);
         ILeafVoter(leafVoter).claimRewards(tokenId, address(this), feeClaims, incentiveClaims);
 
-        IVotingRewardsManager manager = IVotingRewardsManager(votingRewardsManager);
-        address wrappedNative = manager.wrappedNative();
         address account = recipient();
-        if (fees) {
-            _forward(tokenId, account, manager.token0(), wrappedNative);
-            _forward(tokenId, account, manager.token1(), wrappedNative);
-        } else {
-            _forward(tokenId, account, manager.incentive(programId), wrappedNative);
-        }
+        _forward(tokenId, account, token0, wrappedNative, held0);
+        _forward(tokenId, account, token1, wrappedNative, held1);
     }
 
     function recipient() public view returns (address) {
@@ -134,18 +138,30 @@ contract ImmutableClaimOperator {
         }
     }
 
-    function _forward(uint256 tokenId, address account, address token, address wrappedNative) private {
-        if (token == address(0)) return;
-        if (token == wrappedNative) token = NATIVE;
-        (uint256 amount, uint256 fee) = _pay(account, token);
+    function _forward(uint256 tokenId, address account, address token, address wrappedNative, uint256 heldBefore)
+        private
+    {
+        uint256 amount = _held(token, wrappedNative) - heldBefore;
         if (amount == 0) return;
-        emit Claimed(tokenId, token, amount, fee, lastClaimBlock);
-        lastClaimBlock = block.number;
+        if (token == wrappedNative) token = NATIVE;
+        emit Claimed(tokenId, token, amount, _pay(account, token, amount), lastClaimBlock);
+        lastClaimBlock = _blockNumber();
     }
 
-    function _pay(address account, address token) private returns (uint256 amount, uint256 fee) {
-        amount = token == NATIVE ? address(this).balance : IERC20(token).balanceOf(address(this));
-        if (amount == 0) return (0, 0);
+    function _held(address token, address wrappedNative) private view returns (uint256) {
+        if (token == address(0)) return 0;
+        return _balance(token == wrappedNative ? NATIVE : token);
+    }
+
+    function _balance(address token) private view returns (uint256) {
+        return token == NATIVE ? address(this).balance : IERC20(token).balanceOf(address(this));
+    }
+
+    function _blockNumber() private view returns (uint256) {
+        return ARB_SYS.code.length == 0 ? block.number : IArbSys(ARB_SYS).arbBlockNumber();
+    }
+
+    function _pay(address account, address token, uint256 amount) private returns (uint256 fee) {
         fee = amount * FEE_BPS / 10_000;
         if (fee != 0) _send(token, feeRecipient, fee);
         _send(token, account, amount - fee);

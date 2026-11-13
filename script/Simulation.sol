@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.38;
 
+import {ImmutableClaimOperator} from "../src/ImmutableClaimOperator.sol";
 import {ImmutableClaimOperatorFactory} from "../src/ImmutableClaimOperatorFactory.sol";
 import {ILeafVoter} from "../src/interfaces/ILeafVoter.sol";
 import {Discovery} from "./Discovery.sol";
@@ -86,7 +87,17 @@ contract Simulation {
         uint256 gasPerCall,
         uint256[] calldata paidByAero,
         bytes calldata prepared
-    ) external returns (Outcome outcome, uint256 entries, uint256 calls, uint256 mostGas, uint256 unreadPrograms) {
+    )
+        external
+        returns (
+            Outcome outcome,
+            uint256 entries,
+            uint256 calls,
+            uint256 mostGas,
+            uint256 unreadPrograms,
+            uint256 lastClaimBlock
+        )
+    {
         Prepared memory p = abi.decode(prepared, (Prepared));
         entries = p.claims.fees.length + p.claims.incentives.length;
         unreadPrograms = p.claims.unreadPrograms;
@@ -99,7 +110,7 @@ contract Simulation {
                 recipient, tokenId, fees, incentives, entryGas
             ) {}
             catch {
-                return (Outcome.Reverted, entries, calls, mostGas, unreadPrograms);
+                return (Outcome.Reverted, entries, calls, mostGas, unreadPrograms, 0);
             }
             used -= gasleft();
             if (used > mostGas) mostGas = used;
@@ -123,6 +134,7 @@ contract Simulation {
             }
         }
         outcome = nothing ? Outcome.PaidNothing : inFull ? Outcome.PaidInFull : Outcome.PaidInPart;
+        lastClaimBlock = ImmutableClaimOperator(payable(p.clone)).lastClaimBlock();
     }
 
     function _feesThenIncentives(Discovery.Claims memory claims, uint256 from, uint256 count)

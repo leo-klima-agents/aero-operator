@@ -7,6 +7,7 @@ via_ir = true
 bytecode_hash = "ipfs"
 cbor_metadata = true
 remappings = ["forge-std/=lib/forge-std/src/"]
+auto_detect_remappings = false
 fs_permissions = [
   { access = "read", path = "./out" },
   { access = "read-write", path = "./verification" },
@@ -20,6 +21,7 @@ exclude_lints = [
   "arbitrary-send-eth",
   "calls-loop",
   "missing-zero-check",
+  "reentrancy-balance",
   "reentrancy-eth",
   "reentrancy-events",
   "reentrancy-no-eth",

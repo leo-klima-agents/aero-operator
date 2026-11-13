@@ -94,7 +94,7 @@ paid_by_aero() {
 }
 claim_through_clone() {
   local entry_gas=$1 entries_per_call=$2 gas_per_call=$3 paid_by_aero=$4 prepared=$5
-  simulate 'claimThroughClone(uint256,address,uint256,uint256,uint256,uint256[],bytes)(uint8,uint256,uint256,uint256,uint256)' \
+  simulate 'claimThroughClone(uint256,address,uint256,uint256,uint256,uint256[],bytes)(uint8,uint256,uint256,uint256,uint256,uint256)' \
     "$ID" "$RECIPIENT" "$entry_gas" "$entries_per_call" "$gas_per_call" "$paid_by_aero" "$prepared" \
     --override-state-diff "$(with_operator "$clone")" --json
 }
@@ -109,6 +109,7 @@ echo "Aero's own route pays: $paid"
 nothing_in "$paid" && fail "the stake has nothing to claim"
 result=$(claim_through_clone "$ENTRY_GAS" "$ENTRIES_PER_CALL" "$MAX_TRANSACTION_GAS" "$paid" "$every_entry")
 [ "$(jq -j '.[0]' <<<"$result")" = "$OUTCOME_PAID_IN_FULL" ] || fail "the clone did not pay the same: $result"
+[ "$(jq -j '.[5]' <<<"$result")" = "$BLOCK" ] || fail "the clone did not record block $BLOCK as its last claim: $result"
 echo "the clone paid the same, less the fee, and kept nothing: $(jq -j '.[1]' <<<"$result") entries in" \
   "$(jq -j '.[2]' <<<"$result") calls of up to $ENTRIES_PER_CALL, the heaviest using $(jq -j '.[3]' <<<"$result") gas"
 unread_programs=$(jq -j '.[4]' <<<"$result")

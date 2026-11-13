@@ -36,6 +36,13 @@ contract DeployTest is Test {
         assertEq(implementation.feeRecipient(), d.FEE_RECIPIENT());
     }
 
+    function test_run_deploysToAddressesThatHoldNativeTokens() public {
+        vm.deal(d.predict(), 1);
+        vm.deal(d.predictImplementation(), 1);
+
+        assertEq(d.run(), d.predict());
+    }
+
     function test_run_isIdempotent() public {
         address first = d.run();
         bytes32 codehash = first.codehash;

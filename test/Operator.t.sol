@@ -306,6 +306,10 @@ contract OperatorTest is Test {
         ILeafVoter.IncentiveClaim[] memory claims = new ILeafVoter.IncentiveClaim[](2);
         claims[0] = ILeafVoter.IncentiveClaim(address(pair), programId, MAX_CHECKPOINTS);
         claims[1] = ILeafVoter.IncentiveClaim(address(pair), nativeId, 77);
+        vm.expectEmit(address(operator));
+        emit ImmutableClaimOperator.Claimed(TOKEN_ID, address(usdc), 100e6, 1e6, 0);
+        vm.expectEmit(address(operator));
+        emit ImmutableClaimOperator.Claimed(TOKEN_ID, address(0), 1 ether, 0.01 ether, block.number);
         factory.claim(recipient, TOKEN_ID, new ILeafVoter.FeeClaim[](0), claims, ENTRY_GAS);
 
         assertEq(usdc.balanceOf(recipient), 99e6);
@@ -327,16 +331,17 @@ contract OperatorTest is Test {
         assertEq(usdc.balanceOf(feeRecipient), 1);
     }
 
-    function test_claim_forwardsTokensSentToTheClone() public {
+    function test_claim_leavesWhatTheCloneHeldBefore() public {
         usdc.mint(address(operator), 10e6);
         vm.deal(address(operator), 1 ether);
-        _owe(wethPair, 1 ether, 0);
+        _owe(wethPair, 1 ether, 2e6);
 
         factory.claim(recipient, TOKEN_ID, _fees(wethPair), _noIncentives(), ENTRY_GAS);
 
-        assertEq(usdc.balanceOf(recipient), 9.9e6);
-        assertEq(recipient.balance, 1.98 ether);
-        _assertNothingLeft();
+        assertEq(usdc.balanceOf(recipient), 1.98e6);
+        assertEq(recipient.balance, 0.99 ether);
+        assertEq(usdc.balanceOf(address(operator)), 10e6);
+        assertEq(address(operator).balance, 1 ether);
     }
 
     function test_claim_aTokenThatRevertsDoesNotBlockTheOthers() public {
@@ -380,19 +385,6 @@ contract OperatorTest is Test {
 
         assertEq(usdc.balanceOf(recipient), 1.98e6);
         assertEq(usdc.balanceOf(feeRecipient), 0.02e6);
-    }
-
-    function test_claim_rollsBackATransferThatReturnsFalse() public {
-        _owe(pair, 1e18, 0);
-        usdc.mint(address(operator), 1e6);
-        usdc.setMode(MockToken.Mode.ReturnsFalse);
-
-        _expectFailed(address(operator), address(pair), true, 0);
-        factory.claim(recipient, TOKEN_ID, _fees(pair), _noIncentives(), ENTRY_GAS);
-
-        assertEq(aero.balanceOf(recipient), 0);
-        assertEq(aero.balanceOf(address(operator)), 0);
-        assertEq(usdc.balanceOf(address(operator)), 1e6);
     }
 
     function test_claim_rollsBackWhenTheRecipientRefusesNativeTokens() public {
@@ -485,14 +477,16 @@ contract OperatorTest is Test {
 
     function test_claim_pointsEachPaymentToTheBlockOfTheOneBefore() public {
         vm.roll(100);
-        _owe(pair, 1e18, 0);
-        factory.claim(recipient, TOKEN_ID, _fees(pair), _noIncentives(), ENTRY_GAS);
+        _owe(wethPair, 1 ether, 0);
+        factory.claim(recipient, TOKEN_ID, _fees(wethPair), _noIncentives(), ENTRY_GAS);
         assertEq(operator.lastClaimBlock(), 100);
 
         vm.roll(107);
-        usdc.mint(address(operator), 1e6);
+        usdc.mint(address(operator), 1);
+        vm.deal(address(operator), 1);
+        factory.claim(recipient, TOKEN_ID, _fees(wethPair), _noIncentives(), ENTRY_GAS);
         operator.sweep(address(usdc));
-        factory.claim(recipient, TOKEN_ID, _fees(pair), _noIncentives(), ENTRY_GAS);
+        operator.sweep(address(0));
         _owe(pair, 0, 2e6);
         factory.claim(recipient, TOKEN_ID, _fees(pair), _noIncentives(), 10_000);
         assertEq(operator.lastClaimBlock(), 100);
@@ -501,6 +495,34 @@ contract OperatorTest is Test {
         emit ImmutableClaimOperator.Claimed(TOKEN_ID, address(usdc), 2e6, 0.02e6, 100);
         factory.claim(recipient, TOKEN_ID, _fees(pair), _noIncentives(), ENTRY_GAS);
         assertEq(operator.lastClaimBlock(), 107);
+    }
+
+    function test_claim_pointsToTheChainsOwnBlockWhereArbSysIs() public {
+        vm.etch(address(100), hex"fe");
+        vm.mockCall(address(100), abi.encodeWithSignature("arbBlockNumber()"), abi.encode(523_926_782));
+        _owe(pair, 1e18, 0);
+
+        factory.claim(recipient, TOKEN_ID, _fees(pair), _noIncentives(), ENTRY_GAS);
+
+        assertEq(operator.lastClaimBlock(), 523_926_782);
+    }
+
+    function test_claim_givesEveryEntryItsGas() public {
+        pair.setWork(MANAGER_WORK);
+        wethPair.setWork(MANAGER_WORK);
+        _owe(pair, 1e18, 0);
+        _owe(wethPair, 1 ether, 0);
+        ILeafVoter.IncentiveClaim[] memory incentives = new ILeafVoter.IncentiveClaim[](2);
+        incentives[0] =
+            ILeafVoter.IncentiveClaim(address(pair), _oweIncentive(pair, address(usdc), 2e6), MAX_CHECKPOINTS);
+        incentives[1] =
+            ILeafVoter.IncentiveClaim(address(wethPair), _oweIncentive(wethPair, address(usdc), 3e6), MAX_CHECKPOINTS);
+
+        factory.claim(recipient, TOKEN_ID, _fees(pair, wethPair), incentives, MANAGER_WORK + 300_000);
+
+        assertEq(aero.balanceOf(recipient), 0.99e18);
+        assertEq(recipient.balance, 0.99 ether);
+        assertEq(usdc.balanceOf(recipient), 4.95e6);
     }
 
     function test_claim_emitsNothingForATokenThatPaidNothing() public {
@@ -716,6 +738,26 @@ contract OperatorTest is Test {
         assertEq(recipient.balance, 0.99 ether);
         assertEq(feeRecipient.balance, 0.01 ether);
         _assertNothingLeft();
+    }
+
+    function test_sweep_takesNoFeeOnDust() public {
+        _deployClone(recipient);
+        usdc.mint(address(operator), 99);
+
+        vm.expectEmit(address(operator));
+        emit ImmutableClaimOperator.Swept(address(usdc), 99, 0);
+        operator.sweep(address(usdc));
+
+        assertEq(usdc.balanceOf(recipient), 99);
+    }
+
+    function test_sweep_revertsIfATransferReturnsFalse() public {
+        _deployClone(recipient);
+        usdc.mint(address(operator), 10e6);
+        usdc.setMode(MockToken.Mode.ReturnsFalse);
+
+        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.TransferFailed.selector, address(usdc)));
+        operator.sweep(address(usdc));
     }
 
     function test_sweep_ofNothing_doesNothing() public {

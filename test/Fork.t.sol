@@ -285,7 +285,7 @@ contract BaseForkTest is ForkTest {
         assertEq(VOTER.allocationChainAmounts(STAKE, block.chainid), allocated);
     }
 
-    function test_claim_afterASale_isRefused() public {
+    function test_claim_afterASale_worksOnlyThroughTheBuyersClone() public {
         _setOperator(address(operator));
         address buyer = makeAddr("buyer");
         vm.prank(recipient);

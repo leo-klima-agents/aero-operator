@@ -54,6 +54,6 @@ contract Deploy is Script {
                 && implementation.codehash == vm.parseJsonBytes32(record, ".deployment.implementationRuntimeKeccak"),
             "deployed code differs from the record"
         );
-        console.log("deployed");
+        console.log("the code at both addresses matches the record");
     }
 }
