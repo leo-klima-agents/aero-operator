@@ -24,12 +24,12 @@ Neither contract has an owner, settings or an upgrade path:
   then calls the clone's `claim(tokenId, feeClaims, incentiveClaims, entryGas)`. Anyone can call either. The two lists
   are those of the LeafVoter's `claimRewards`.
 - The clone claims each entry on its own, to itself, from a rewards manager that the LeafVoter's `FACTORY_REGISTRY`
-  lists. It then sends 1% of what the entry paid in each token, rounded down, to the fee Safe, and the rest to the
+  lists. It then sends 1% of what it received in each token, rounded down, to the fee Safe, and the rest to the
   recipient. A manager pays its `wrappedNative` token in native tokens, and the clone forwards those.
 - An entry that fails is undone: its rewards stay in the rewards manager, the clone emits
   `ClaimFailed(tokenId, votingRewardsManager, fees, programId)` and goes on. For each token it forwards, it emits
   `Claimed(tokenId, token, amount, fee, previousClaimBlock)`: `token` is the zero address for native tokens, and
-  `amount` is what the entry paid, fee included.
+  `amount` is what the clone received during the entry, fee included.
 - The clone stores one thing: the block of its last payment in a claim, `lastClaimBlock()`. Each `Claimed` carries the
   block stored before it, so a clone's claims can be read newest first, one block of logs at a time: start at
   `lastClaimBlock()` and follow the smallest `previousClaimBlock` below the current block. The block is the chain's
@@ -117,8 +117,8 @@ The addresses are the same on every chain:
 
 | | |
 |---|---|
-| Factory | `0x5852683c3B8b8EEa0CeD4833293CA67b6fD46731` |
-| `ImmutableClaimOperator` | `0x565f1939089F9877eC3648C1ad954F8e96954679` |
+| Factory | `0x9A48f3E233a0068e7Bb97e1335799eC49cdaA8DB` |
+| `ImmutableClaimOperator` | `0xC902bd20AaA3d95d0F92E47E22c7bA8C42919FAF` |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
 | Base's chain id | 8453 |

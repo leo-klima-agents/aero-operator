@@ -507,6 +507,22 @@ contract OperatorTest is Test {
         assertEq(operator.lastClaimBlock(), 523_926_782);
     }
 
+    function test_claim_pointsToBlockNumberWhereArbSysDoesNotAnswer() public {
+        vm.mockCall(address(100), abi.encodeWithSignature("arbBlockNumber()"), abi.encode(523_926_782));
+        bytes[3] memory codes = [bytes(""), hex"00", hex"60006000fd"];
+        for (uint256 i; i < codes.length; ++i) {
+            if (i == 1) vm.clearMockedCalls();
+            vm.etch(address(100), codes[i]);
+            vm.roll(200 + i);
+            _owe(pair, 1e18, 0);
+
+            factory.claim(recipient, TOKEN_ID, _fees(pair), _noIncentives(), ENTRY_GAS);
+
+            assertEq(operator.lastClaimBlock(), 200 + i);
+        }
+        assertEq(aero.balanceOf(recipient), 2.97e18);
+    }
+
     function test_claim_givesEveryEntryItsGas() public {
         pair.setWork(MANAGER_WORK);
         wethPair.setWork(MANAGER_WORK);
@@ -650,12 +666,14 @@ contract OperatorTest is Test {
         assertEq(aero.balanceOf(address(pair)), 1e18);
     }
 
-    function test_claim_skipsAZeroToken() public {
+    function test_claim_leavesWhatAManagerPaysWithoutNamingIt() public {
         MockRewardsManager single = _manager(address(aero), address(0));
         MockRewardsManager plain = new MockRewardsManager(address(usdc), address(0), address(0));
         registry.register(address(plain));
         aero.mint(address(single), 1e18);
         single.setFees(TOKEN_ID, 1e18, 0);
+        vm.deal(address(single), 5);
+        single.setTip(5);
         usdc.mint(address(plain), 2e6);
         plain.setFees(TOKEN_ID, 2e6, 0);
         vm.deal(address(operator), 1 ether);
@@ -664,7 +682,20 @@ contract OperatorTest is Test {
 
         assertEq(aero.balanceOf(recipient), 0.99e18);
         assertEq(usdc.balanceOf(recipient), 1.98e6);
-        assertEq(address(operator).balance, 1 ether);
+        assertEq(recipient.balance, 0);
+        assertEq(address(operator).balance, 1 ether + 5);
+    }
+
+    function test_claim_paysOnceWhenBothTokensAreTheSame() public {
+        MockRewardsManager same = _manager(address(aero), address(aero));
+        _owe(same, 1e18, 2e18);
+
+        vm.expectEmit(address(operator));
+        emit ImmutableClaimOperator.Claimed(TOKEN_ID, address(aero), 3e18, 0.03e18, 0);
+        factory.claim(recipient, TOKEN_ID, _fees(same), _noIncentives(), ENTRY_GAS);
+
+        assertEq(aero.balanceOf(recipient), 2.97e18);
+        _assertNothingLeft();
     }
 
     function testFuzz_claim_paysEverythingOut(uint256 amount0, uint256 amount1, uint256 amountNative) public {

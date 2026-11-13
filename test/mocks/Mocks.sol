@@ -91,6 +91,7 @@ contract MockRewardsManager {
 
     uint256 public incentiveCount;
     uint256 public work;
+    uint256 public tip;
     uint256 public lastMaxCheckpoints;
     mapping(uint256 programId => Incentive) public incentive;
     mapping(uint256 tokenId => uint256[2]) internal _fees;
@@ -125,8 +126,16 @@ contract MockRewardsManager {
         work = work_;
     }
 
+    function setTip(uint256 tip_) external {
+        tip = tip_;
+    }
+
     function claimFees(uint256 tokenId, address recipient, uint256 maxCheckpoints) external {
         _work(maxCheckpoints);
+        if (tip != 0) {
+            (bool ok,) = recipient.call{value: tip}("");
+            require(ok, "tip");
+        }
         (uint256 amount0, uint256 amount1) = (_fees[tokenId][0], _fees[tokenId][1]);
         delete _fees[tokenId];
         _pay(recipient, token0, amount0);
