@@ -280,13 +280,13 @@ contract OperatorTest is Test {
         _owe(wethPair, 3 ether, 5e6);
 
         vm.expectEmit(address(operator));
-        emit ImmutableClaimOperator.Claimed(TOKEN_ID, address(aero), 1e18, 0.01e18);
+        emit ImmutableClaimOperator.Claimed(TOKEN_ID, address(aero), 1e18, 0.01e18, 0);
         vm.expectEmit(address(operator));
-        emit ImmutableClaimOperator.Claimed(TOKEN_ID, address(usdc), 2e6, 0.02e6);
+        emit ImmutableClaimOperator.Claimed(TOKEN_ID, address(usdc), 2e6, 0.02e6, block.number);
         vm.expectEmit(address(operator));
-        emit ImmutableClaimOperator.Claimed(TOKEN_ID, address(0), 3 ether, 0.03 ether);
+        emit ImmutableClaimOperator.Claimed(TOKEN_ID, address(0), 3 ether, 0.03 ether, block.number);
         vm.expectEmit(address(operator));
-        emit ImmutableClaimOperator.Claimed(TOKEN_ID, address(usdc), 5e6, 0.05e6);
+        emit ImmutableClaimOperator.Claimed(TOKEN_ID, address(usdc), 5e6, 0.05e6, block.number);
         factory.claim(recipient, TOKEN_ID, _fees(pair, wethPair), _noIncentives(), ENTRY_GAS);
 
         assertEq(aero.balanceOf(recipient), 0.99e18);
@@ -481,6 +481,26 @@ contract OperatorTest is Test {
         assertEq(usdc.balanceOf(recipient), 0);
         assertEq(aero.balanceOf(address(pair)), 1e18);
         _assertNothingLeft();
+    }
+
+    function test_claim_pointsEachPaymentToTheBlockOfTheOneBefore() public {
+        vm.roll(100);
+        _owe(pair, 1e18, 0);
+        factory.claim(recipient, TOKEN_ID, _fees(pair), _noIncentives(), ENTRY_GAS);
+        assertEq(operator.lastClaimBlock(), 100);
+
+        vm.roll(107);
+        usdc.mint(address(operator), 1e6);
+        operator.sweep(address(usdc));
+        factory.claim(recipient, TOKEN_ID, _fees(pair), _noIncentives(), ENTRY_GAS);
+        _owe(pair, 0, 2e6);
+        factory.claim(recipient, TOKEN_ID, _fees(pair), _noIncentives(), 10_000);
+        assertEq(operator.lastClaimBlock(), 100);
+
+        vm.expectEmit(address(operator));
+        emit ImmutableClaimOperator.Claimed(TOKEN_ID, address(usdc), 2e6, 0.02e6, 100);
+        factory.claim(recipient, TOKEN_ID, _fees(pair), _noIncentives(), ENTRY_GAS);
+        assertEq(operator.lastClaimBlock(), 107);
     }
 
     function test_claim_emitsNothingForATokenThatPaidNothing() public {

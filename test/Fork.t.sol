@@ -125,7 +125,7 @@ abstract contract ForkTest is Test {
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(operator) || logs[i].topics[0] != CLAIMED) continue;
             assertEq(uint256(logs[i].topics[1]), STAKE);
-            (uint256 amount, uint256 fee) = abi.decode(logs[i].data, (uint256, uint256));
+            (uint256 amount, uint256 fee,) = abi.decode(logs[i].data, (uint256, uint256, uint256));
             assertEq(fee, amount / 100);
             sums[_indexOf(address(uint160(uint256(logs[i].topics[2]))))] += feesNotAmounts ? fee : amount;
         }
@@ -180,6 +180,7 @@ abstract contract ForkTest is Test {
         assertEq(address(operator).code.length, 0);
         Vm.Log[] memory logs = _claim();
         assertEq(operator.recipient(), recipient);
+        assertEq(operator.lastClaimBlock(), block.number);
         uint256[] memory paid = _gained(recipient, before);
         uint256[] memory fees = _gained(feeRecipient, feesBefore);
 

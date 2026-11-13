@@ -27,8 +27,11 @@ Neither contract has an owner, settings or an upgrade path:
   the recipient. A manager pays its `wrappedNative` token in native tokens, and the clone forwards those.
 - An entry that fails is undone: its rewards stay in the rewards manager, the clone emits
   `ClaimFailed(tokenId, votingRewardsManager, fees, programId)` and goes on. For each token it forwards, it emits
-  `Claimed(tokenId, token, amount, fee)`: `token` is the zero address for native tokens, and `amount` is all the
-  clone held, fee included.
+  `Claimed(tokenId, token, amount, fee, previousClaimBlock)`: `token` is the zero address for native tokens, and
+  `amount` is all the clone held, fee included.
+- The clone stores one thing: the block of its last payment in a claim, `lastClaimBlock()`. Each `Claimed` carries the
+  block stored before it, so a clone's claims can be read newest first, one block of logs at a time: start at
+  `lastClaimBlock()` and follow the smallest `previousClaimBlock` below the current block.
 - Each entry gets `entryGas`. `claim` reverts with `InsufficientGas` unless it can pass that much on and keep 20,000
   to go on. So a claim never succeeds with an entry that failed for lack of gas in the transaction.
 - On Base, `claim` reverts with `NotOwner` unless the recipient owns the stake. Other chains can't tell, and a stake
@@ -36,7 +39,7 @@ Neither contract has an owner, settings or an upgrade path:
 - `sweep(recipient, token)` on the factory deploys the clone if it has no code, then calls the clone's `sweep(token)`.
   Anyone can call either. The clone sends its balance of the token the same way, or its native tokens for the zero
   address, and emits `Swept(token, amount, fee)`. A token can be any contract, so `Swept` proves a payment only for a
-  token that is known.
+  token that is known. A sweep leaves `lastClaimBlock()` as it is.
 - `recipient`, `claim` and `sweep` revert with `NotClone` in code that is not 65 bytes long.
 
 ## Claiming
@@ -111,8 +114,8 @@ The addresses are the same on every chain:
 
 | | |
 |---|---|
-| Factory | `0x45eF5225A80F6CEA611eCcF7D8f8A2020DD71FD1` |
-| `ImmutableClaimOperator` | `0xD3f5fFCDC897aa66Ceb8C85333E23f5B630a07Fb` |
+| Factory | `0x6036a2cf22E58233F55cc193c0cA9B984109E245` |
+| `ImmutableClaimOperator` | `0x9038FBba5221719cEE962Eae3f047b451f9EcF81` |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
 | Base's chain id | 8453 |

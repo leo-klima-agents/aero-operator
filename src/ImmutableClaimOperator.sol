@@ -19,9 +19,12 @@ contract ImmutableClaimOperator {
     uint256 public immutable baseChainId;
     address public immutable feeRecipient;
 
+    uint256 public lastClaimBlock;
     bool private transient locked;
 
-    event Claimed(uint256 indexed tokenId, address indexed token, uint256 amount, uint256 fee);
+    event Claimed(
+        uint256 indexed tokenId, address indexed token, uint256 amount, uint256 fee, uint256 previousClaimBlock
+    );
     event ClaimFailed(uint256 indexed tokenId, address indexed votingRewardsManager, bool fees, uint256 programId);
     event Swept(address indexed token, uint256 amount, uint256 fee);
 
@@ -135,7 +138,9 @@ contract ImmutableClaimOperator {
         if (token == address(0)) return;
         if (token == wrappedNative) token = NATIVE;
         (uint256 amount, uint256 fee) = _pay(account, token);
-        if (amount != 0) emit Claimed(tokenId, token, amount, fee);
+        if (amount == 0) return;
+        emit Claimed(tokenId, token, amount, fee, lastClaimBlock);
+        lastClaimBlock = block.number;
     }
 
     function _pay(address account, address token) private returns (uint256 amount, uint256 fee) {
