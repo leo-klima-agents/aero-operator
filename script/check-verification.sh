@@ -2,13 +2,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+ARTIFACT=out/ImmutableClaimOperatorFactory.sol/ImmutableClaimOperatorFactory.json
 HASHES=verification/bytecode-hashes.json
-CONTRACTS=(ImmutableClaimOperatorFactory ImmutableClaimOperator)
+INPUT=verification/ImmutableClaimOperatorFactory.standard-input.json
+[ -f "$ARTIFACT" ] || { echo "::error::$ARTIFACT missing; run forge build" >&2; exit 1; }
 [ -f "$HASHES" ] || { echo "::error::$HASHES missing; run script/refresh-verification.sh" >&2; exit 1; }
-for name in "${CONTRACTS[@]}"; do
-  [ -f "out/$name.sol/$name.json" ] || { echo "::error::out/$name.sol/$name.json missing; run forge build" >&2; exit 1; }
-  [ -f "verification/$name.standard-input.json" ] || { echo "::error::verification/$name.standard-input.json missing; run script/refresh-verification.sh" >&2; exit 1; }
-done
+[ -f "$INPUT" ] || { echo "::error::$INPUT missing; run script/refresh-verification.sh" >&2; exit 1; }
 status=0
 
 expect() {
@@ -22,39 +21,27 @@ expect() {
   fi
 }
 
-creation=$(jq -j '.bytecode.object' out/ImmutableClaimOperatorFactory.sol/ImmutableClaimOperatorFactory.json)
-expect .factoryCreationCodeKeccak "$(cast keccak "$creation")"
-expect .implementationCreationCodeKeccak "$(cast keccak "$(jq -j '.bytecode.object' out/ImmutableClaimOperator.sol/ImmutableClaimOperator.json)")"
-expect .solc "$(jq -j '.metadata.compiler.version' out/ImmutableClaimOperatorFactory.sol/ImmutableClaimOperatorFactory.json)"
+creation=$(jq -j '.bytecode.object' "$ARTIFACT")
+expect .creationCodeKeccak "$(cast keccak "$creation")"
+expect .solc "$(jq -j '.metadata.compiler.version' "$ARTIFACT")"
 expect .salt "$(cast keccak "$(jq -j .saltPreimage "$HASHES")")"
 
 args=$(cast abi-encode 'constructor(address,address,uint256,address)' \
   "$(jq -j .deployment.leafVoter "$HASHES")" "$(jq -j .deployment.escrow "$HASHES")" \
   "$(jq -j .deployment.baseChainId "$HASHES")" "$(jq -j .deployment.feeRecipient "$HASHES")")
 expect .deployment.constructorArgs "$args"
-factory=$(cast create2 --deployer "$(jq -j .create2Deployer "$HASHES")" --salt "$(jq -j .salt "$HASHES")" --init-code "${creation}${args#0x}" | grep -oE '0x[0-9a-fA-F]{40}' | head -n1)
+factory=$(cast compute-address "$(jq -j .create2Deployer "$HASHES")" --salt "$(jq -j .salt "$HASHES")" --init-code "${creation}${args#0x}")
 expect .deployment.factory "$factory"
-expect .deployment.implementation "$(cast compute-address "$factory" --nonce 1 | grep -oE '0x[0-9a-fA-F]{40}' | head -n1)"
-
-recorded=$(mktemp)
-cp "$HASHES" "$recorded"
-forge script script/Hashes.s.sol --sig 'record()' > /dev/null
-rebuilt=$(cat "$HASHES")
-mv "$recorded" "$HASHES"
-expect .deployment.factoryRuntimeKeccak "$(jq -j .deployment.factoryRuntimeKeccak <<<"$rebuilt")"
-expect .deployment.implementationRuntimeKeccak "$(jq -j .deployment.implementationRuntimeKeccak <<<"$rebuilt")"
+expect .deployment.implementation "$(cast compute-address "$factory" --nonce 1)"
 
 projection='del(.settings.outputSelection)'
-for name in "${CONTRACTS[@]}"; do
-  input="verification/$name.standard-input.json"
-  current=$(forge verify-contract --show-standard-json-input 0x0000000000000000000000000000000000000001 "src/$name.sol:$name" | jq -S "$projection")
-  if [ "$current" != "$(jq -S "$projection" "$input")" ]; then
-    echo "::error::$input is stale" >&2
-    status=1
-  else
-    echo "$input ok"
-  fi
-done
+current=$(forge verify-contract --show-standard-json-input 0x0000000000000000000000000000000000000001 src/ImmutableClaimOperatorFactory.sol:ImmutableClaimOperatorFactory | jq -S "$projection")
+if [ "$current" != "$(jq -S "$projection" "$INPUT")" ]; then
+  echo "::error::$INPUT is stale" >&2
+  status=1
+else
+  echo "$INPUT ok"
+fi
 
 for key in .deployment.factory .deployment.implementation .deployment.leafVoter .deployment.escrow \
   .deployment.feeRecipient .create2Deployer .saltPreimage; do

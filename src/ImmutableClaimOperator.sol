@@ -12,6 +12,7 @@ contract ImmutableClaimOperator {
     uint256 private constant CLONE_SIZE = 65;
     uint256 private constant RESERVED_GAS = 20_000;
     uint256 private constant EIP150_DIVISOR = 64;
+    address private constant NATIVE = address(0);
 
     address public immutable leafVoter;
     address public immutable escrow;
@@ -25,24 +26,19 @@ contract ImmutableClaimOperator {
     event Swept(address indexed token, uint256 amount, uint256 fee);
 
     error NoCode(address account);
-    error NotClone();
-    error InsufficientGas();
-    error Reentrancy();
     error NotOwner();
     error NotSelf();
     error NotRegistered(address votingRewardsManager);
+    error NotClone();
+    error InsufficientGas();
     error TransferFailed(address token);
+    error Reentrancy();
 
     modifier nonReentrant() {
         if (locked) revert Reentrancy();
         locked = true;
         _;
         locked = false;
-    }
-
-    modifier onlySelf() {
-        if (msg.sender != address(this)) revert NotSelf();
-        _;
     }
 
     constructor(address leafVoter_, address escrow_, uint256 baseChainId_, address feeRecipient_) {
@@ -55,16 +51,6 @@ contract ImmutableClaimOperator {
 
     receive() external payable {}
 
-    function recipient() public view returns (address) {
-        if (address(this).code.length != CLONE_SIZE) revert NotClone();
-        bytes memory code = address(this).code;
-        uint160 account = 0;
-        for (uint256 i = CLONE_SIZE - 20; i < CLONE_SIZE; ++i) {
-            account = account << 8 | uint8(code[i]);
-        }
-        return address(account);
-    }
-
     function claim(
         uint256 tokenId,
         ILeafVoter.FeeClaim[] calldata feeClaims,
@@ -74,16 +60,17 @@ contract ImmutableClaimOperator {
         address account = recipient();
         if (block.chainid == baseChainId && IVotingEscrow(escrow).ownerOf(tokenId) != account) revert NotOwner();
         for (uint256 i; i < feeClaims.length; ++i) {
-            _try(tokenId, feeClaims[i].votingRewardsManager, true, 0, feeClaims[i].maxCheckpoints, entryGas);
+            ILeafVoter.FeeClaim calldata entry = feeClaims[i];
+            _try(tokenId, entry.votingRewardsManager, true, 0, entry.maxCheckpoints, entryGas);
         }
         for (uint256 i; i < incentiveClaims.length; ++i) {
-            ILeafVoter.IncentiveClaim calldata c = incentiveClaims[i];
-            _try(tokenId, c.votingRewardsManager, false, c.programId, c.maxCheckpoints, entryGas);
+            ILeafVoter.IncentiveClaim calldata entry = incentiveClaims[i];
+            _try(tokenId, entry.votingRewardsManager, false, entry.programId, entry.maxCheckpoints, entryGas);
         }
     }
 
     function sweep(address token) external nonReentrant {
-        (uint256 amount, uint256 fee) = _pay(recipient(), token, token == address(0));
+        (uint256 amount, uint256 fee) = _pay(recipient(), token);
         if (amount != 0) emit Swept(token, amount, fee);
     }
 
@@ -93,7 +80,8 @@ contract ImmutableClaimOperator {
         bool fees,
         uint256 programId,
         uint256 maxCheckpoints
-    ) external onlySelf {
+    ) external {
+        if (msg.sender != address(this)) revert NotSelf();
         address registry = ILeafVoter(leafVoter).FACTORY_REGISTRY();
         if (IFactoryRegistry(registry).rewardsToGauge(votingRewardsManager) == address(0)) {
             revert NotRegistered(votingRewardsManager);
@@ -105,14 +93,24 @@ contract ImmutableClaimOperator {
         ILeafVoter(leafVoter).claimRewards(tokenId, address(this), feeClaims, incentiveClaims);
 
         IVotingRewardsManager manager = IVotingRewardsManager(votingRewardsManager);
-        address native = manager.wrappedNative();
+        address wrappedNative = manager.wrappedNative();
         address account = recipient();
         if (fees) {
-            _forward(tokenId, account, manager.token0(), native);
-            _forward(tokenId, account, manager.token1(), native);
+            _forward(tokenId, account, manager.token0(), wrappedNative);
+            _forward(tokenId, account, manager.token1(), wrappedNative);
         } else {
-            _forward(tokenId, account, manager.incentive(programId), native);
+            _forward(tokenId, account, manager.incentive(programId), wrappedNative);
         }
+    }
+
+    function recipient() public view returns (address) {
+        bytes memory code = address(this).code;
+        if (code.length != CLONE_SIZE) revert NotClone();
+        uint160 account = 0;
+        for (uint256 i = CLONE_SIZE - 20; i < CLONE_SIZE; ++i) {
+            account = account << 8 | uint8(code[i]);
+        }
+        return address(account);
     }
 
     function _try(
@@ -133,23 +131,24 @@ contract ImmutableClaimOperator {
         }
     }
 
-    function _forward(uint256 tokenId, address account, address token, address native) private {
+    function _forward(uint256 tokenId, address account, address token, address wrappedNative) private {
         if (token == address(0)) return;
-        (uint256 amount, uint256 fee) = _pay(account, token, token == native);
+        if (token == wrappedNative) token = NATIVE;
+        (uint256 amount, uint256 fee) = _pay(account, token);
         if (amount != 0) emit Claimed(tokenId, token, amount, fee);
     }
 
-    function _pay(address account, address token, bool isNative) private returns (uint256 amount, uint256 fee) {
-        amount = isNative ? address(this).balance : IERC20(token).balanceOf(address(this));
+    function _pay(address account, address token) private returns (uint256 amount, uint256 fee) {
+        amount = token == NATIVE ? address(this).balance : IERC20(token).balanceOf(address(this));
         if (amount == 0) return (0, 0);
         fee = amount * FEE_BPS / 10_000;
-        if (fee != 0) _send(token, isNative, feeRecipient, fee);
-        _send(token, isNative, account, amount - fee);
+        if (fee != 0) _send(token, feeRecipient, fee);
+        _send(token, account, amount - fee);
     }
 
-    function _send(address token, bool isNative, address to, uint256 amount) private {
+    function _send(address token, address to, uint256 amount) private {
         bool ok;
-        if (isNative) {
+        if (token == NATIVE) {
             (ok,) = to.call{value: amount}("");
         } else {
             bytes memory ret;

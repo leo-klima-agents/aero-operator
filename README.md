@@ -16,7 +16,7 @@ Neither contract has an owner, settings or an upgrade path:
 
 - `operatorOf(recipient)` on the factory gives a recipient's clone, whether or not it exists yet:
 
-      initCode = 0x6100413d81600a3d39f3363d3d373d3d3d363d73 ++ implementation ++ 0x5af43d82803e903d91602b57fd5bf3 ++ recipient
+      initCode = 0x6100413d81600a3d39f3363d3d373d3d3d363d73 ++ ImmutableClaimOperator ++ 0x5af43d82803e903d91602b57fd5bf3 ++ recipient
       operator = last 20 bytes of keccak256(0xff ++ factory ++ bytes32(0) ++ keccak256(initCode))
 
 - `claim(recipient, tokenId, feeClaims, incentiveClaims, entryGas)` on the factory deploys the clone if it has no code,
@@ -27,16 +27,16 @@ Neither contract has an owner, settings or an upgrade path:
   the recipient. A manager pays its `wrappedNative` token in native tokens, and the clone forwards those.
 - An entry that fails is undone: its rewards stay in the rewards manager, the clone emits
   `ClaimFailed(tokenId, votingRewardsManager, fees, programId)` and goes on. For each token it forwards, it emits
-  `Claimed(tokenId, token, amount, fee)`: `token` is the wrapped token for native tokens, where `Swept` has the zero
-  address, and `amount` is all the clone held, fee included.
-- `sweep(recipient, token)` on the factory deploys the clone if it has no code, then calls the clone's `sweep(token)`.
-  Anyone can call either. The clone sends its balance of the token the same way, or its native tokens for the zero
-  address, and emits `Swept(token, amount, fee)`. A token can be any contract, so `Swept` proves a payment only for a
-  token that is known.
+  `Claimed(tokenId, token, amount, fee)`: `token` is the zero address for native tokens, and `amount` is all the
+  clone held, fee included.
 - Each entry gets `entryGas`. `claim` reverts with `InsufficientGas` unless it can pass that much on and keep 20,000
   to go on. So a claim never succeeds with an entry that failed for lack of gas in the transaction.
 - On Base, `claim` reverts with `NotOwner` unless the recipient owns the stake. Other chains can't tell, and a stake
   keeps its operators when it changes hands.
+- `sweep(recipient, token)` on the factory deploys the clone if it has no code, then calls the clone's `sweep(token)`.
+  Anyone can call either. The clone sends its balance of the token the same way, or its native tokens for the zero
+  address, and emits `Swept(token, amount, fee)`. A token can be any contract, so `Swept` proves a payment only for a
+  token that is known.
 - `recipient`, `claim` and `sweep` revert with `NotClone` in code that is not 65 bytes long.
 
 ## Claiming
@@ -59,12 +59,12 @@ Neither contract has an owner, settings or an upgrade path:
   | `I` | The transaction's intrinsic gas | 21,000 plus 4 per zero byte and 16 per other byte of calldata |
   | `F` | What the factory uses before it calls the clone | 4,406, and 45,079 more when it deploys the clone |
   | `P` | What the clone's proxy uses: `2,624 + 6w + ⌊w² / 512⌋` for `w` 32-byte words of calldata to the clone | 2,678 |
-  | `U` | What the clone uses before its last entry, earlier entries included | 4,157, and 9,821 on Base |
+  | `U` | What the clone uses before its last entry, earlier entries included | 3,923, and 9,587 on Base |
 
-  A claim sent to the clone needs `I + P + g(U + 20,000 + g(entryGas))`. The unit tests pin these numbers, and calls
-  bisected on all eight chains matched to the unit. Arbitrum One, Robinhood Chain and Elysium also charge the limit
-  for posting the transaction's data, so use `eth_estimateGas` there. It finds a limit that goes through. Earlier
-  entries can use more by the time the transaction lands, up to `entryGas` each, so add a margin.
+  A claim sent to the clone needs `I + P + g(U + 20,000 + g(entryGas))`. The unit tests pin these numbers but Base's,
+  and calls bisected on all eight chains matched exactly. Arbitrum One, Robinhood Chain and Elysium also charge the
+  limit for posting the transaction's data, so use `eth_estimateGas` there. It finds a limit that goes through.
+  Earlier entries can use more by the time the transaction lands, up to `entryGas` each, so add a margin.
 - **Cost.** An entry costs about 60,000 gas more than through Aero's Voter. Base and Ethereum allow a transaction
   16,777,216 gas, so split long lists.
 - **Failures.** To learn why an entry fails, call the clone's
@@ -76,7 +76,7 @@ Neither contract has an owner, settings or an upgrade path:
 
 - The clones are only as safe as Aero's LeafVoter, registry and rewards managers.
 - Whoever calls `claim` chooses each entry's gas. On Base nothing on Aero's fee path catches a failure, so an entry
-  given too little fails whole. Other chains' basic-pool gauges were not read.
+  given too little fails whole. Other chains' basic-pool gauges were not checked.
 - A token the recipient or the fee Safe can't receive fails every entry that pays it. A fee entry pays a pool's two
   tokens together.
 - Tokens a clone holds go to its recipient, less the fee, with the next claim that pays them or with `sweep`. A
@@ -86,8 +86,7 @@ Neither contract has an owner, settings or an upgrade path:
   fee.
 - An operator set before a sale stays set. On Base, a buyer's own clone set by the seller works once the buyer owns
   the stake.
-- A stake has one operator per chain. Aero's local `allocateGauges` is for the operator only and a clone can't call
-  it. It is off on all eight chains, and the owner allocates from Base either way.
+- A stake has one operator per chain: naming a clone replaces any other.
 
 ## Deployment
 
@@ -95,23 +94,25 @@ Not deployed. The factory needs the fee Safe on the chain: its constructor rever
 2026-11-13 the Safe was only on Base. The constructor only checks for code, so check the Safe's owners and threshold
 on each chain.
 
-| Chain | Id | LeafVoter | CREATE2 deployer | Fee Safe | Safe 1.5.0 singleton |
-|---|---|---|---|---|---|
-| Base | 8453 | yes | yes | yes | yes |
-| OP Mainnet | 10 | yes | yes | no | yes |
-| Ethereum | 1 | yes | yes | no | yes |
-| Arbitrum One | 42161 | yes | yes | no | yes |
-| Ink | 57073 | yes | yes | no | yes |
-| Robinhood Chain | 4663 | yes | yes | no | yes |
-| Arc | 5042 | yes | yes | no | yes |
-| Elysium | 99901 | yes | yes | no | no |
+The LeafVoter and the CREATE2 deployer are on all eight chains:
+
+| Chain | Id | Fee Safe | Safe 1.5.0 singleton |
+|---|---|---|---|
+| Base | 8453 | yes | yes |
+| OP Mainnet | 10 | no | yes |
+| Ethereum | 1 | no | yes |
+| Arbitrum One | 42161 | no | yes |
+| Ink | 57073 | no | yes |
+| Robinhood Chain | 4663 | no | yes |
+| Arc | 5042 | no | yes |
+| Elysium | 99901 | no | no |
 
 The addresses are the same on every chain:
 
 | | |
 |---|---|
-| Factory | `0xd2aCe8497b3eEf32df10Dce2D49e26c365443837` |
-| `ImmutableClaimOperator` | `0xA669E8575B8e872219c0Cc6544b7c7b6114c9B80` |
+| Factory | `0x45eF5225A80F6CEA611eCcF7D8f8A2020DD71FD1` |
+| `ImmutableClaimOperator` | `0xD3f5fFCDC897aa66Ceb8C85333E23f5B630a07Fb` |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
 | Base's chain id | 8453 |
@@ -119,13 +120,17 @@ The addresses are the same on every chain:
 | Fee | 1%, fixed in the source |
 | Method | CREATE2 through `0x4e59b44847b379578588920cA78FbF26c0B4956C`, salt `keccak256("metadex.cafe/ImmutableClaimOperatorFactory/v1")` |
 
-For each chain:
+Once:
 
 1. Install Foundry v1.9.0 with `foundryup --install v1.9.0`. Another version can compile different bytecode.
 2. Run `forge test` with `BASE_RPC_URL` and `ETHEREUM_RPC_URL` set, then `script/check-verification.sh`.
+
+Then for each chain:
+
 3. Run `script/simulate.sh $RPC_URL <token-id>` for a stake with rewards on the chain. Off Base, `RECIPIENT` sets the
    recipient to simulate.
-4. Deploy. The script stops unless the build, and then the deployed code, match `verification/bytecode-hashes.json`:
+4. Deploy. The script stops unless the build matches `verification/bytecode-hashes.json`. Run again, it compares the
+   code on the chain with the record:
 
 ```
 forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --ledger
@@ -172,8 +177,7 @@ A clone's code is `0x363d3d373d3d3d363d73`, the `ImmutableClaimOperator`'s addre
 - `script/check-verification.sh` checks `verification/` and this file's addresses against the build.
   `script/refresh-verification.sh` regenerates `verification/`.
 
-The contracts compile with solc 0.8.38 for `osaka`, via-IR, with 1,000,000 optimizer runs. All eight chains run
-`osaka`, and the code is the same as for `prague` but for its metadata hash.
+The contracts compile with solc 0.8.38 for `osaka`, which all eight chains run, via-IR, with 1,000,000 optimizer runs.
 
 ## License
 

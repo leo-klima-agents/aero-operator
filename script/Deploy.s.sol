@@ -4,7 +4,6 @@ pragma solidity 0.8.38;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 
-import {ImmutableClaimOperator} from "../src/ImmutableClaimOperator.sol";
 import {ImmutableClaimOperatorFactory} from "../src/ImmutableClaimOperatorFactory.sol";
 
 contract Deploy is Script {
@@ -38,10 +37,7 @@ contract Deploy is Script {
 
     function deploy(string memory record) public returns (address deployed) {
         require(CREATE2_FACTORY.code.length != 0, "CREATE2 deployer not present");
-        try new ImmutableClaimOperator(LEAF_VOTER, ESCROW, BASE_CHAIN_ID, FEE_RECIPIENT) {}
-        catch {
-            revert("fee Safe not present");
-        }
+        require(FEE_RECIPIENT.code.length != 0, "fee Safe not present");
         deployed = predict();
         address implementation = predictImplementation();
         console.log("ImmutableClaimOperatorFactory", deployed);

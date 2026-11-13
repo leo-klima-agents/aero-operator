@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.38;
 
-import {ImmutableClaimOperator} from "../src/ImmutableClaimOperator.sol";
 import {ImmutableClaimOperatorFactory} from "../src/ImmutableClaimOperatorFactory.sol";
 import {Deploy} from "./Deploy.s.sol";
 
 contract Hashes is Deploy {
     function record() external {
         string memory artifact = vm.readFile("out/ImmutableClaimOperatorFactory.sol/ImmutableClaimOperatorFactory.json");
-        if (predict().code.length == 0) {
-            if (FEE_RECIPIENT.code.length == 0) vm.etch(FEE_RECIPIENT, hex"00");
-            (bool ok,) = CREATE2_FACTORY.call(bytes.concat(SALT, initCode()));
-            require(ok && predict().code.length != 0, "CREATE2 deploy failed");
-        }
+        vm.etch(FEE_RECIPIENT, hex"00");
+        (bool ok,) = CREATE2_FACTORY.call(bytes.concat(SALT, initCode()));
+        require(ok && predict().code.length != 0, "CREATE2 deploy failed");
 
         string memory dep = "deployment";
         string memory depJson = vm.serializeAddress(dep, "leafVoter", LEAF_VOTER);
@@ -32,10 +29,7 @@ contract Hashes is Deploy {
         json = vm.serializeString(root, "saltPreimage", SALT_PREIMAGE);
         json = vm.serializeBytes32(root, "salt", SALT);
         json = vm.serializeBytes32(
-            root, "factoryCreationCodeKeccak", keccak256(type(ImmutableClaimOperatorFactory).creationCode)
-        );
-        json = vm.serializeBytes32(
-            root, "implementationCreationCodeKeccak", keccak256(type(ImmutableClaimOperator).creationCode)
+            root, "creationCodeKeccak", keccak256(type(ImmutableClaimOperatorFactory).creationCode)
         );
         json = vm.serializeString(root, "deployment", depJson);
         vm.writeJson(json, "verification/bytecode-hashes.json");

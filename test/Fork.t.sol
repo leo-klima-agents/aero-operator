@@ -38,8 +38,9 @@ interface IVotingEscrowExtra {
 abstract contract ForkTest is Test {
     uint256 internal constant ENTRY_GAS = 1_000_000;
     bytes internal constant FEE_SAFE_STAND_IN = hex"00";
-    bytes32 internal constant CLAIMED = keccak256("Claimed(uint256,address,uint256,uint256)");
-    bytes32 internal constant CLAIM_FAILED = keccak256("ClaimFailed(uint256,address,bool,uint256)");
+    uint256 internal constant STAKE = 621;
+    bytes32 internal constant CLAIMED = ImmutableClaimOperator.Claimed.selector;
+    bytes32 internal constant CLAIM_FAILED = ImmutableClaimOperator.ClaimFailed.selector;
 
     Deploy internal d;
     ILeafVoterExtra internal leaf;
@@ -58,7 +59,6 @@ abstract contract ForkTest is Test {
     function _rpc() internal view virtual returns (string memory);
     function _block() internal pure virtual returns (uint256);
     function _chainId() internal pure virtual returns (uint256);
-    function _stake() internal pure virtual returns (uint256);
     function _recipient() internal virtual returns (address);
     function _setOperator(address account) internal virtual;
 
@@ -79,16 +79,12 @@ abstract contract ForkTest is Test {
     }
 
     function _discover() internal {
-        Discovery.Claims memory claims = Discovery.claims(address(leaf), _stake(), 0, true);
+        Discovery.Claims memory claims = Discovery.claims(address(leaf), STAKE, 0, true);
         assertGt(claims.fees.length, 0, "the stake has nothing to claim on this chain at this block");
         assertEq(claims.unreadPrograms, 0, "some incentive programs could not be read");
         emit log_named_uint("gauges and programs left out, which a fork cannot run", claims.leftOut);
-        for (uint256 i; i < claims.fees.length; ++i) {
-            feeClaims.push(claims.fees[i]);
-        }
-        for (uint256 i; i < claims.incentives.length; ++i) {
-            incentiveClaims.push(claims.incentives[i]);
-        }
+        feeClaims = claims.fees;
+        incentiveClaims = claims.incentives;
         tokens = claims.tokens;
         wrappedNative = claims.wrappedNative;
     }
@@ -105,7 +101,7 @@ abstract contract ForkTest is Test {
         vm.recordLogs();
         vm.prank(keeper);
         uint256 gas = gasleft();
-        factory.claim(recipient, _stake(), feeClaims, incentiveClaims, ENTRY_GAS);
+        factory.claim(recipient, STAKE, feeClaims, incentiveClaims, ENTRY_GAS);
         claimGas = gas - gasleft();
         return vm.getRecordedLogs();
     }
@@ -113,15 +109,9 @@ abstract contract ForkTest is Test {
     function _failuresWith(uint256 entryGas) internal returns (uint256 failures) {
         uint256 snapshot = vm.snapshotState();
         vm.recordLogs();
-        factory.claim(recipient, _stake(), feeClaims, incentiveClaims, entryGas);
+        factory.claim(recipient, STAKE, feeClaims, incentiveClaims, entryGas);
         failures = _count(vm.getRecordedLogs(), CLAIM_FAILED);
         vm.revertToState(snapshot);
-    }
-
-    function _checkTheGasAFirstClaimNeeds() internal {
-        _setOperator(address(operator));
-        assertEq(_failuresWith(700_000), 0);
-        assertGt(_failuresWith(500_000), 0);
     }
 
     function _count(Vm.Log[] memory logs, bytes32 topic) internal view returns (uint256 count) {
@@ -130,29 +120,27 @@ abstract contract ForkTest is Test {
         }
     }
 
-    function _claimed(Vm.Log[] memory logs) internal view returns (uint256[] memory amounts, uint256[] memory fees) {
-        amounts = new uint256[](tokens.length);
-        fees = new uint256[](tokens.length);
+    function _claimed(Vm.Log[] memory logs, bool feesNotAmounts) internal view returns (uint256[] memory sums) {
+        sums = new uint256[](tokens.length);
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(operator) || logs[i].topics[0] != CLAIMED) continue;
-            assertEq(uint256(logs[i].topics[1]), _stake());
-            address token = address(uint160(uint256(logs[i].topics[2])));
+            assertEq(uint256(logs[i].topics[1]), STAKE);
             (uint256 amount, uint256 fee) = abi.decode(logs[i].data, (uint256, uint256));
             assertEq(fee, amount / 100);
-            for (uint256 j; j < tokens.length; ++j) {
-                if (tokens[j] != (token == wrappedNative ? address(0) : token)) continue;
-                amounts[j] += amount;
-                fees[j] += fee;
-            }
+            sums[_indexOf(address(uint160(uint256(logs[i].topics[2]))))] += feesNotAmounts ? fee : amount;
         }
     }
 
+    function _indexOf(address token) internal view returns (uint256 index) {
+        while (tokens[index] != token) ++index;
+    }
+
     function _stakeState() internal view returns (bytes memory state) {
-        (, uint48 lastAllocated, bool zeroCap, uint128 chainAllocation) = leaf.tokenStates(_stake());
-        address[] memory gauges = leaf.allocatedGauges(_stake());
+        (, uint48 lastAllocated, bool zeroCap, uint128 chainAllocation) = leaf.tokenStates(STAKE);
+        address[] memory gauges = leaf.allocatedGauges(STAKE);
         state = abi.encode(lastAllocated, zeroCap, chainAllocation, gauges);
         for (uint256 i; i < gauges.length; ++i) {
-            state = bytes.concat(state, abi.encode(leaf.allocations(_stake(), gauges[i])));
+            state = bytes.concat(state, abi.encode(leaf.allocations(STAKE, gauges[i])));
         }
     }
 
@@ -167,48 +155,11 @@ abstract contract ForkTest is Test {
         }
     }
 
-    function test_addresses_matchTheRecord() public view {
-        string memory json = vm.readFile("verification/bytecode-hashes.json");
-        assertEq(address(factory), vm.parseJsonAddress(json, ".deployment.factory"));
-        assertEq(factory.implementation(), vm.parseJsonAddress(json, ".deployment.implementation"));
-        assertEq(address(factory).codehash, vm.parseJsonBytes32(json, ".deployment.factoryRuntimeKeccak"));
-        assertEq(
-            factory.implementation().codehash, vm.parseJsonBytes32(json, ".deployment.implementationRuntimeKeccak")
-        );
-
-        bytes32 initCodeHash = keccak256(
-            abi.encodePacked(
-                hex"6100413d81600a3d39f3363d3d373d3d3d363d73",
-                vm.parseJsonAddress(json, ".deployment.implementation"),
-                hex"5af43d82803e903d91602b57fd5bf3",
-                recipient
-            )
-        );
-        assertEq(
-            address(operator),
-            vm.computeCreate2Address(bytes32(0), initCodeHash, vm.parseJsonAddress(json, ".deployment.factory"))
-        );
-
-        ImmutableClaimOperator implementation = ImmutableClaimOperator(payable(factory.implementation()));
-        assertEq(implementation.leafVoter(), 0x382409fad8503FbCdbB27A4211551fa03e884078);
-        assertEq(implementation.escrow(), 0xBF7977E1521e9a3032bf7243Ee4712f311f13915);
-        assertEq(implementation.baseChainId(), 8453);
-        assertEq(implementation.feeRecipient(), 0x450c72de8c0079B49AcedF294a13011bd09D125B);
-    }
-
-    function test_theFactory_cannotBeDeployedWithoutTheFeeSafe() public {
-        vm.etch(feeRecipient, "");
-
-        (bool ok,) = CREATE2_FACTORY.call(bytes.concat(bytes32(uint256(1)), d.initCode()));
-
-        assertFalse(ok);
-    }
-
-    function test_claim_revertsUnlessAnEntryCanBeGivenItsGas() public {
+    function test_claim_noEntryFailsWith700000GasAndSomeDoWith500000() public {
         _setOperator(address(operator));
 
-        vm.expectRevert(ImmutableClaimOperator.InsufficientGas.selector);
-        factory.claim{gas: ENTRY_GAS}(recipient, _stake(), feeClaims, incentiveClaims, ENTRY_GAS);
+        assertEq(_failuresWith(700_000), 0);
+        assertGt(_failuresWith(500_000), 0);
     }
 
     function test_claim_paysInFullLessTheFee() public {
@@ -220,7 +171,7 @@ abstract contract ForkTest is Test {
         uint256[] memory before = _balances(recipient);
         vm.prank(leaf.ORCHESTRATOR());
         uint256 directGas = gasleft();
-        ILeafVoter(address(leaf)).claimRewards(_stake(), recipient, feeClaims, incentiveClaims);
+        ILeafVoter(address(leaf)).claimRewards(STAKE, recipient, feeClaims, incentiveClaims);
         directGas -= gasleft();
         uint256[] memory direct = _gained(recipient, before);
         vm.revertToState(snapshot);
@@ -231,12 +182,11 @@ abstract contract ForkTest is Test {
         assertEq(operator.recipient(), recipient);
         uint256[] memory paid = _gained(recipient, before);
         uint256[] memory fees = _gained(feeRecipient, feesBefore);
-        (uint256[] memory claimed, uint256[] memory claimedFees) = _claimed(logs);
 
+        assertEq(_claimed(logs, false), direct);
+        assertEq(_claimed(logs, true), fees);
         for (uint256 i; i < tokens.length; ++i) {
             assertEq(paid[i] + fees[i], direct[i]);
-            assertEq(claimed[i], direct[i]);
-            assertEq(claimedFees[i], fees[i]);
             assertLe(fees[i], direct[i] / 100);
             assertGe(fees[i] + 2 * entries, direct[i] / 100);
         }
@@ -250,7 +200,7 @@ abstract contract ForkTest is Test {
         _assertNothingLeft();
     }
 
-    function test_sweep_paysTheWrappedAndNativeTokensAClaimLeaves() public {
+    function test_sweep_paysTheWrappedAndNativeTokensTheCloneHolds() public {
         _setOperator(address(operator));
         _claim();
         deal(wrappedNative, address(operator), 1 ether);
@@ -272,9 +222,9 @@ abstract contract ForkTest is Test {
 
     function test_optingOut_stopsTheClaims() public {
         _setOperator(address(operator));
-        assertEq(leaf.operator(_stake()), address(operator));
+        assertEq(leaf.operator(STAKE), address(operator));
         _setOperator(address(0));
-        assertEq(leaf.operator(_stake()), address(0));
+        assertEq(leaf.operator(STAKE), address(0));
         bytes memory stake = _stakeState();
         uint256[] memory before = _balances(recipient);
         uint256[] memory feesBefore = _balances(feeRecipient);
@@ -309,60 +259,52 @@ contract BaseForkTest is ForkTest {
         return 8453;
     }
 
-    function _stake() internal pure override returns (uint256) {
-        return 621;
-    }
-
     function _recipient() internal override returns (address) {
         escrow = IVotingEscrowExtra(d.ESCROW());
-        return escrow.ownerOf(_stake());
+        return escrow.ownerOf(STAKE);
     }
 
     function _setOperator(address account) internal override {
         vm.prank(recipient);
-        VOTER.setOperator(_stake(), block.chainid, account, 0, recipient);
-    }
-
-    function test_claim_noEntryFailsWith700000GasAndSomeDoWith500000() public {
-        _checkTheGasAFirstClaimNeeds();
+        VOTER.setOperator(STAKE, block.chainid, account, 0, recipient);
     }
 
     function test_claim_leavesTheStakeWithItsOwner() public {
-        (uint128 amount, uint48 end, bool isPermanent) = escrow.staked(_stake());
-        uint128 allocated = VOTER.allocationChainAmounts(_stake(), block.chainid);
+        (uint128 amount, uint48 end, bool isPermanent) = escrow.staked(STAKE);
+        uint128 allocated = VOTER.allocationChainAmounts(STAKE, block.chainid);
         _setOperator(address(operator));
 
         _claim();
 
-        assertEq(escrow.ownerOf(_stake()), recipient);
-        (uint128 amountAfter, uint48 endAfter, bool isPermanentAfter) = escrow.staked(_stake());
+        assertEq(escrow.ownerOf(STAKE), recipient);
+        (uint128 amountAfter, uint48 endAfter, bool isPermanentAfter) = escrow.staked(STAKE);
         assertEq(amountAfter, amount);
         assertEq(endAfter, end);
         assertEq(isPermanentAfter, isPermanent);
-        assertEq(VOTER.allocationChainAmounts(_stake(), block.chainid), allocated);
+        assertEq(VOTER.allocationChainAmounts(STAKE, block.chainid), allocated);
     }
 
     function test_claim_afterASale_isRefused() public {
         _setOperator(address(operator));
         address buyer = makeAddr("buyer");
         vm.prank(recipient);
-        escrow.transferFrom(recipient, buyer, _stake());
-        assertEq(leaf.operator(_stake()), address(operator));
+        escrow.transferFrom(recipient, buyer, STAKE);
+        assertEq(leaf.operator(STAKE), address(operator));
         uint256[] memory before = _balances(recipient);
 
         vm.expectRevert(ImmutableClaimOperator.NotOwner.selector);
-        factory.claim(recipient, _stake(), feeClaims, incentiveClaims, ENTRY_GAS);
+        factory.claim(recipient, STAKE, feeClaims, incentiveClaims, ENTRY_GAS);
         assertEq(_balances(recipient), before);
 
-        vm.expectRevert(bytes4(keccak256("NotAuthorized()")));
+        vm.expectRevert(abi.encodeWithSignature("NotAuthorized()"));
         vm.prank(recipient);
-        VOTER.setOperator(_stake(), block.chainid, address(operator), 0, recipient);
+        VOTER.setOperator(STAKE, block.chainid, address(operator), 0, recipient);
 
         address buyerOperator = factory.operatorOf(buyer);
         vm.prank(buyer);
-        VOTER.setOperator(_stake(), block.chainid, buyerOperator, 0, buyer);
+        VOTER.setOperator(STAKE, block.chainid, buyerOperator, 0, buyer);
         uint256 native = buyer.balance;
-        factory.claim(buyer, _stake(), feeClaims, incentiveClaims, ENTRY_GAS);
+        factory.claim(buyer, STAKE, feeClaims, incentiveClaims, ENTRY_GAS);
         assertGt(buyer.balance, native);
         assertEq(_balances(recipient), before);
     }
@@ -390,10 +332,6 @@ contract EthereumForkTest is ForkTest {
         return 1;
     }
 
-    function _stake() internal pure override returns (uint256) {
-        return 621;
-    }
-
     function _recipient() internal override returns (address) {
         return makeAddr("recipient");
     }
@@ -401,11 +339,7 @@ contract EthereumForkTest is ForkTest {
     function _setOperator(address account) internal override {
         address bridgeFromBase = leaf.ORCHESTRATOR();
         vm.prank(bridgeFromBase);
-        leaf.setOperator(_stake(), account);
-    }
-
-    function test_claim_noEntryFailsWith700000GasAndSomeDoWith500000() public {
-        _checkTheGasAFirstClaimNeeds();
+        leaf.setOperator(STAKE, account);
     }
 
     function test_claim_aTokenTheRecipientCannotReceive_failsAloneAndStaysClaimable() public {

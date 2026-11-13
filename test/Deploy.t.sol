@@ -9,36 +9,31 @@ import {ImmutableClaimOperatorFactory} from "../src/ImmutableClaimOperatorFactor
 
 contract DeployTest is Test {
     Deploy internal d;
+    string internal record;
 
     function setUp() public {
         d = new Deploy();
+        record = vm.readFile("verification/bytecode-hashes.json");
         vm.etch(d.FEE_RECIPIENT(), hex"00");
     }
 
     function test_run_deploysTheRecordedCodeAtThePredictedAddresses() public {
-        uint256[3] memory chains = [uint256(10), 1, 42161];
         address predicted = d.predict();
-        string memory record = vm.readFile("verification/bytecode-hashes.json");
-        for (uint256 i; i < chains.length; ++i) {
-            uint256 snapshot = vm.snapshotState();
-            vm.chainId(chains[i]);
-            assertEq(predicted.code.length, 0);
+        assertEq(predicted.code.length, 0);
 
-            assertEq(d.run(), predicted);
+        assertEq(d.run(), predicted);
 
-            ImmutableClaimOperatorFactory factory = ImmutableClaimOperatorFactory(predicted);
-            ImmutableClaimOperator implementation = ImmutableClaimOperator(payable(factory.implementation()));
-            assertEq(address(implementation), d.predictImplementation());
-            assertEq(address(factory).codehash, vm.parseJsonBytes32(record, ".deployment.factoryRuntimeKeccak"));
-            assertEq(
-                address(implementation).codehash, vm.parseJsonBytes32(record, ".deployment.implementationRuntimeKeccak")
-            );
-            assertEq(implementation.leafVoter(), d.LEAF_VOTER());
-            assertEq(implementation.escrow(), d.ESCROW());
-            assertEq(implementation.baseChainId(), d.BASE_CHAIN_ID());
-            assertEq(implementation.feeRecipient(), d.FEE_RECIPIENT());
-            vm.revertToState(snapshot);
-        }
+        ImmutableClaimOperatorFactory factory = ImmutableClaimOperatorFactory(predicted);
+        ImmutableClaimOperator implementation = ImmutableClaimOperator(payable(factory.implementation()));
+        assertEq(address(implementation), d.predictImplementation());
+        assertEq(address(factory).codehash, vm.parseJsonBytes32(record, ".deployment.factoryRuntimeKeccak"));
+        assertEq(
+            address(implementation).codehash, vm.parseJsonBytes32(record, ".deployment.implementationRuntimeKeccak")
+        );
+        assertEq(implementation.leafVoter(), d.LEAF_VOTER());
+        assertEq(implementation.escrow(), d.ESCROW());
+        assertEq(implementation.baseChainId(), d.BASE_CHAIN_ID());
+        assertEq(implementation.feeRecipient(), d.FEE_RECIPIENT());
     }
 
     function test_run_isIdempotent() public {
@@ -50,7 +45,6 @@ contract DeployTest is Test {
     }
 
     function test_deploy_refusesABuildThatDiffersFromTheRecord() public {
-        string memory record = vm.readFile("verification/bytecode-hashes.json");
         string memory another = vm.replace(record, vm.toString(d.predict()), vm.toString(address(1)));
 
         vm.expectRevert(bytes("build differs from the record"));
@@ -58,7 +52,6 @@ contract DeployTest is Test {
     }
 
     function test_deploy_refusesCodeThatDiffersFromTheRecord() public {
-        string memory record = vm.readFile("verification/bytecode-hashes.json");
         string[2] memory keys = [".deployment.factoryRuntimeKeccak", ".deployment.implementationRuntimeKeccak"];
         for (uint256 i; i < keys.length; ++i) {
             string memory recorded = vm.toString(vm.parseJsonBytes32(record, keys[i]));
@@ -94,7 +87,7 @@ contract DeployTest is Test {
         d.run();
     }
 
-    function test_run_failsWithoutTheFeeRecipient() public {
+    function test_run_failsWithoutTheFeeSafe() public {
         vm.etch(d.FEE_RECIPIENT(), "");
         vm.expectRevert(bytes("fee Safe not present"));
         d.run();

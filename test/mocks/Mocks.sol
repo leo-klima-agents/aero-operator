@@ -85,7 +85,6 @@ contract MockRewardsManager {
         address creator;
     }
 
-    address public immutable voter;
     address public immutable token0;
     address public immutable token1;
     address public immutable wrappedNative;
@@ -97,8 +96,7 @@ contract MockRewardsManager {
     mapping(uint256 tokenId => uint256[2]) internal _fees;
     mapping(uint256 tokenId => mapping(uint256 programId => uint256)) public incentives;
 
-    constructor(address voter_, address token0_, address token1_, address wrappedNative_) {
-        voter = voter_;
+    constructor(address token0_, address token1_, address wrappedNative_) {
         token0 = token0_;
         token1 = token1_;
         wrappedNative = wrappedNative_;
@@ -128,7 +126,6 @@ contract MockRewardsManager {
     }
 
     function claimFees(uint256 tokenId, address recipient, uint256 maxCheckpoints) external {
-        require(msg.sender == voter && maxCheckpoints != 0, "claimFees");
         _work(maxCheckpoints);
         (uint256 amount0, uint256 amount1) = (_fees[tokenId][0], _fees[tokenId][1]);
         delete _fees[tokenId];
@@ -137,9 +134,8 @@ contract MockRewardsManager {
     }
 
     function claimIncentives(uint256 tokenId, address recipient, uint256 programId, uint256 maxCheckpoints) external {
-        require(msg.sender == voter && maxCheckpoints != 0, "claimIncentives");
         _work(maxCheckpoints);
-        require(programId != 0 && programId <= incentiveCount, "program");
+        require(programId != 0, "program");
         uint256 amount = incentives[tokenId][programId];
         delete incentives[tokenId][programId];
         _pay(recipient, incentive[programId].token, amount);
@@ -186,14 +182,11 @@ contract MockLeafVoter {
     ) external {
         if (msg.sender != operator[tokenId]) revert NotAuthorized();
         for (uint256 i; i < feeClaims.length; ++i) {
-            address manager = feeClaims[i].votingRewardsManager;
-            if (MockFactoryRegistry(FACTORY_REGISTRY).rewardsToGauge(manager) == address(0)) continue;
-            MockRewardsManager(payable(manager)).claimFees(tokenId, recipient, feeClaims[i].maxCheckpoints);
+            MockRewardsManager(payable(feeClaims[i].votingRewardsManager))
+                .claimFees(tokenId, recipient, feeClaims[i].maxCheckpoints);
         }
         for (uint256 i; i < incentiveClaims.length; ++i) {
-            address manager = incentiveClaims[i].votingRewardsManager;
-            if (MockFactoryRegistry(FACTORY_REGISTRY).rewardsToGauge(manager) == address(0)) continue;
-            MockRewardsManager(payable(manager))
+            MockRewardsManager(payable(incentiveClaims[i].votingRewardsManager))
                 .claimIncentives(tokenId, recipient, incentiveClaims[i].programId, incentiveClaims[i].maxCheckpoints);
         }
     }

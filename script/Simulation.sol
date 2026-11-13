@@ -25,15 +25,15 @@ contract Simulation {
 
     error LeftBehind(address token, address account, uint256 amount);
 
-    function build(address create2Deployer, bytes calldata saltAndInitCode)
+    function build(address create2Deployer, bytes calldata saltAndInitCode, address factory, address implementation)
         external
-        returns (address factory, bytes memory factoryCode, address implementation, bytes memory implementationCode)
+        returns (bytes memory, bytes memory)
     {
-        (bool ok, bytes memory deployed) = create2Deployer.call(saltAndInitCode);
-        require(ok && deployed.length == 20, "CREATE2 deploy failed");
-        factory = address(bytes20(deployed));
-        implementation = ImmutableClaimOperatorFactory(factory).implementation();
-        return (factory, factory.code, implementation, implementation.code);
+        if (factory.code.length == 0) {
+            (bool ok,) = create2Deployer.call(saltAndInitCode);
+            require(ok, "CREATE2 deploy failed");
+        }
+        return (factory.code, implementation.code);
     }
 
     function gasLeft() external view returns (uint256) {
@@ -48,14 +48,13 @@ contract Simulation {
         return passedOn <= allButOne64th && passedOn + 5_000 > allButOne64th && asked <= 100_000 && asked > 99_000;
     }
 
-    function claimAsOperator(address leafVoter, uint256 tokenId, address recipient, uint256 maxGauges, bool feesOnly)
+    function claimAsOperator(address leafVoter, uint256 tokenId, address recipient, bytes calldata prepared)
         external
         returns (uint256[] memory)
     {
-        Discovery.Claims memory claims = _claims(leafVoter, tokenId, maxGauges, feesOnly);
-        uint256[] memory before = Discovery.balances(claims.tokens, recipient);
-        ILeafVoter(leafVoter).claimRewards(tokenId, recipient, claims.fees, claims.incentives);
-        return Discovery.gained(claims.tokens, recipient, before);
+        Prepared memory p = abi.decode(prepared, (Prepared));
+        ILeafVoter(leafVoter).claimRewards(tokenId, recipient, p.claims.fees, p.claims.incentives);
+        return Discovery.gained(p.claims.tokens, recipient, p.held);
     }
 
     function prepare(
@@ -68,7 +67,8 @@ contract Simulation {
         bool feesOnly
     ) external view returns (bytes memory) {
         Prepared memory p;
-        p.claims = _claims(leafVoter, tokenId, maxGauges, feesOnly);
+        p.claims = Discovery.claims(leafVoter, tokenId, maxGauges, false);
+        if (feesOnly) p.claims.incentives = new ILeafVoter.IncentiveClaim[](0);
         p.feeRecipient = feeRecipient;
         p.clone = factory.operatorOf(recipient);
         p.factory = address(factory);
@@ -123,15 +123,6 @@ contract Simulation {
             }
         }
         outcome = nothing ? Outcome.PaidNothing : inFull ? Outcome.PaidInFull : Outcome.PaidInPart;
-    }
-
-    function _claims(address leafVoter, uint256 tokenId, uint256 maxGauges, bool feesOnly)
-        private
-        view
-        returns (Discovery.Claims memory claims)
-    {
-        claims = Discovery.claims(leafVoter, tokenId, maxGauges, false);
-        if (feesOnly) claims.incentives = new ILeafVoter.IncentiveClaim[](0);
     }
 
     function _feesThenIncentives(Discovery.Claims memory claims, uint256 from, uint256 count)
