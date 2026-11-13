@@ -36,6 +36,14 @@ factory=$(cast create2 --deployer "$(jq -j .create2Deployer "$HASHES")" --salt "
 expect .deployment.factory "$factory"
 expect .deployment.implementation "$(cast compute-address "$factory" --nonce 1 | grep -oE '0x[0-9a-fA-F]{40}' | head -n1)"
 
+recorded=$(mktemp)
+cp "$HASHES" "$recorded"
+forge script script/Hashes.s.sol --sig 'record()' > /dev/null
+rebuilt=$(cat "$HASHES")
+mv "$recorded" "$HASHES"
+expect .deployment.factoryRuntimeKeccak "$(jq -j .deployment.factoryRuntimeKeccak <<<"$rebuilt")"
+expect .deployment.implementationRuntimeKeccak "$(jq -j .deployment.implementationRuntimeKeccak <<<"$rebuilt")"
+
 projection='del(.settings.outputSelection)'
 for name in "${CONTRACTS[@]}"; do
   input="verification/$name.standard-input.json"

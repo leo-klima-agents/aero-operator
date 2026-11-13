@@ -36,7 +36,7 @@ jobs:
       - run: forge test -vvv
 
   fork:
-    name: fork tests (each chain skipped without its RPC secret)
+    name: fork tests
     runs-on: ubuntu-26.04
     env:
       BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
@@ -46,11 +46,12 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
-      - name: which chains have an RPC secret
+      - name: both chains have an RPC secret
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         run: |
           for name in BASE ETHEREUM; do
             variable="${name}_RPC_URL"
-            [ -n "${!variable}" ] || echo "::warning::$variable secret not set; that chain's fork tests are skipped"
+            [ -n "${!variable}" ] || { echo "::error::$variable secret not set"; exit 1; }
           done
       - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
         with:

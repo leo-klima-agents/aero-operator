@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.37;
+pragma solidity 0.8.38;
 
 import {IERC20} from "../src/interfaces/IERC20.sol";
 import {ILeafVoter} from "../src/interfaces/ILeafVoter.sol";
@@ -45,7 +45,7 @@ library Discovery {
         uint256 n = maxGauges != 0 && maxGauges < gauges.length ? maxGauges : gauges.length;
         ILeafVoter.FeeClaim[] memory fees = new ILeafVoter.FeeClaim[](n);
         ILeafVoter.IncentiveClaim[] memory incentives = new ILeafVoter.IncentiveClaim[](MAX_PROGRAMS * n);
-        address[] memory tokens = new address[]((MAX_PROGRAMS + 2) * n + 1);
+        address[] memory tokens = new address[]((MAX_PROGRAMS + 2) * n + 2);
         uint256 managers;
         uint256 programs;
         uint256 count;
@@ -83,7 +83,10 @@ library Discovery {
                 count = _track(tokens, count, token, native);
             }
         }
-        if (found.wrappedNative != address(0)) tokens[count++] = NATIVE;
+        if (found.wrappedNative != address(0)) {
+            tokens[count++] = NATIVE;
+            tokens[count++] = found.wrappedNative;
+        }
         assembly ("memory-safe") {
             mstore(fees, managers)
             mstore(incentives, programs)

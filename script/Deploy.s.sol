@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.37;
+pragma solidity 0.8.38;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
@@ -32,27 +32,32 @@ contract Deploy is Script {
         return vm.computeCreateAddress(predict(), 1);
     }
 
-    function run() external returns (address deployed) {
+    function run() external returns (address) {
+        return deploy(vm.readFile("verification/bytecode-hashes.json"));
+    }
+
+    function deploy(string memory record) public returns (address deployed) {
         require(CREATE2_FACTORY.code.length != 0, "CREATE2 deployer not present");
         try new ImmutableClaimOperator(LEAF_VOTER, ESCROW, BASE_CHAIN_ID, FEE_RECIPIENT) {}
         catch {
             revert("fee Safe not present");
         }
         deployed = predict();
+        address implementation = predictImplementation();
         console.log("ImmutableClaimOperatorFactory", deployed);
-        console.log("ImmutableClaimOperator", predictImplementation());
-        require(
-            deployed == vm.parseJsonAddress(vm.readFile("verification/bytecode-hashes.json"), ".deployment.factory"),
-            "build differs from verification/bytecode-hashes.json"
-        );
-        if (deployed.code.length != 0) {
-            console.log("already deployed");
-            return deployed;
+        console.log("ImmutableClaimOperator", implementation);
+        require(deployed == vm.parseJsonAddress(record, ".deployment.factory"), "build differs from the record");
+        if (deployed.code.length == 0) {
+            vm.startBroadcast();
+            (bool ok,) = CREATE2_FACTORY.call(bytes.concat(SALT, initCode()));
+            vm.stopBroadcast();
+            require(ok, "CREATE2 deploy failed");
         }
-        vm.startBroadcast();
-        (bool ok,) = CREATE2_FACTORY.call(bytes.concat(SALT, initCode()));
-        vm.stopBroadcast();
-        require(ok && deployed.code.length != 0, "CREATE2 deploy failed");
+        require(
+            deployed.codehash == vm.parseJsonBytes32(record, ".deployment.factoryRuntimeKeccak")
+                && implementation.codehash == vm.parseJsonBytes32(record, ".deployment.implementationRuntimeKeccak"),
+            "deployed code differs from the record"
+        );
         console.log("deployed");
     }
 }

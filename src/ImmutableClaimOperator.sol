@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.37;
+pragma solidity 0.8.38;
 
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IFactoryRegistry} from "./interfaces/IFactoryRegistry.sol";
@@ -22,6 +22,7 @@ contract ImmutableClaimOperator {
 
     event Claimed(uint256 indexed tokenId, address indexed token, uint256 amount, uint256 fee);
     event ClaimFailed(uint256 indexed tokenId, address indexed votingRewardsManager, bool fees, uint256 programId);
+    event Swept(address indexed token, uint256 amount, uint256 fee);
 
     error NoCode(address account);
     error NotClone();
@@ -81,6 +82,11 @@ contract ImmutableClaimOperator {
         }
     }
 
+    function sweep(address token) external nonReentrant {
+        (uint256 amount, uint256 fee) = _pay(recipient(), token, token == address(0));
+        if (amount != 0) emit Swept(token, amount, fee);
+    }
+
     function claimEntry(
         uint256 tokenId,
         address votingRewardsManager,
@@ -129,13 +135,16 @@ contract ImmutableClaimOperator {
 
     function _forward(uint256 tokenId, address account, address token, address native) private {
         if (token == address(0)) return;
-        bool isNative = token == native;
-        uint256 amount = isNative ? address(this).balance : IERC20(token).balanceOf(address(this));
-        if (amount == 0) return;
-        uint256 fee = amount * FEE_BPS / 10_000;
+        (uint256 amount, uint256 fee) = _pay(account, token, token == native);
+        if (amount != 0) emit Claimed(tokenId, token, amount, fee);
+    }
+
+    function _pay(address account, address token, bool isNative) private returns (uint256 amount, uint256 fee) {
+        amount = isNative ? address(this).balance : IERC20(token).balanceOf(address(this));
+        if (amount == 0) return (0, 0);
+        fee = amount * FEE_BPS / 10_000;
         if (fee != 0) _send(token, isNative, feeRecipient, fee);
         _send(token, isNative, account, amount - fee);
-        emit Claimed(tokenId, token, amount, fee);
     }
 
     function _send(address token, bool isNative, address to, uint256 amount) private {
@@ -145,7 +154,7 @@ contract ImmutableClaimOperator {
         } else {
             bytes memory ret;
             (ok, ret) = token.call(abi.encodeCall(IERC20.transfer, (to, amount)));
-            ok = ok && (ret.length == 0 ? token.code.length != 0 : abi.decode(ret, (bool)));
+            ok = ok && (ret.length == 0 || abi.decode(ret, (bool)));
         }
         if (!ok) revert TransferFailed(token);
     }

@@ -1,5 +1,5 @@
 [profile.default]
-solc_version = "0.8.37"
+solc_version = "0.8.38"
 evm_version = "prague"
 optimizer = true
 optimizer_runs = 1_000_000
@@ -20,6 +20,7 @@ exclude_lints = [
   "arbitrary-send-eth",
   "calls-loop",
   "missing-zero-check",
+  "reentrancy-eth",
   "reentrancy-events",
   "reentrancy-no-eth",
   "require-revert-in-loop",

@@ -20,14 +20,19 @@ OUTCOME_PAID_IN_FULL=1
 OUTCOME_PAID_NOTHING=3
 
 HASHES=verification/bytecode-hashes.json
-ARTIFACT=out/Simulation.sol/Simulation.json
 forge build > /dev/null
-LEAF_VOTER=$(jq -j .deployment.leafVoter "$HASHES")
-ESCROW=$(jq -j .deployment.escrow "$HASHES")
-BASE_CHAIN_ID=$(jq -j .deployment.baseChainId "$HASHES")
-FEE_SAFE=$(jq -j .deployment.feeRecipient "$HASHES")
-DEPLOYMENT="($LEAF_VOTER,$ESCROW,$BASE_CHAIN_ID,$FEE_SAFE)"
-DEPLOYMENT_TYPE='(address,address,uint256,address)'
+record() {
+  jq -j "$1" "$HASHES"
+}
+lowercase() {
+  tr '[:upper:]' '[:lower:]' <<<"$1"
+}
+LEAF_VOTER=$(record .deployment.leafVoter)
+ESCROW=$(record .deployment.escrow)
+BASE_CHAIN_ID=$(record .deployment.baseChainId)
+FEE_SAFE=$(record .deployment.feeRecipient)
+FACTORY=$(record .deployment.factory)
+IMPLEMENTATION=$(record .deployment.implementation)
 SIMULATION=0x0000000000000000000000000000000000515151
 LEAF_VOTER_TOKEN_STATES_SLOT=10
 
@@ -39,28 +44,45 @@ else
   RECIPIENT=${RECIPIENT:-0x00000000000000000000000000000000000A11cE}
 fi
 
-code_overrides="$SIMULATION:$(jq -j .deployedBytecode.object "$ARTIFACT")"
-if [ "$(cast code "$FEE_SAFE" --rpc-url "$RPC" --block "$BLOCK")" = 0x ]; then
+code_overrides="$SIMULATION:$(jq -j .deployedBytecode.object out/Simulation.sol/Simulation.json)"
+fee_safe_code=$(cast code "$FEE_SAFE" --rpc-url "$RPC" --block "$BLOCK")
+if [ "$fee_safe_code" = 0x ]; then
   echo "the fee Safe is not on chain $CHAIN_ID: a contract that only accepts payments stands in for it"
   accepts_payments=0x00
   code_overrides="$code_overrides,$FEE_SAFE:$accepts_payments"
 fi
-simulate() {
-  cast call "$SIMULATION" "$@" --rpc-url "$RPC" --block "$BLOCK" \
-    --override-code "$code_overrides" --override-nonce "$SIMULATION:1"
+call() {
+  cast call "$@" --rpc-url "$RPC" --block "$BLOCK" --override-code "$code_overrides"
 }
+simulate() {
+  call "$SIMULATION" "$@"
+}
+
+salt_and_init_code=$(cast concat-hex "$(record .salt)" \
+  "$(jq -j .bytecode.object out/ImmutableClaimOperatorFactory.sol/ImmutableClaimOperatorFactory.json)" \
+  "$(record .deployment.constructorArgs)")
+built=$(simulate 'build(address,bytes)(address,bytes,address,bytes)' "$(record .create2Deployer)" \
+  "$salt_and_init_code" --json)
+factory_code=$(jq -j '.[1]' <<<"$built")
+implementation_code=$(jq -j '.[3]' <<<"$built")
+if [ "$(lowercase "$(jq -j '.[0]' <<<"$built")")" != "$(lowercase "$FACTORY")" ] ||
+  [ "$(lowercase "$(jq -j '.[2]' <<<"$built")")" != "$(lowercase "$IMPLEMENTATION")" ] ||
+  [ "$(cast keccak "$factory_code")" != "$(record .deployment.factoryRuntimeKeccak)" ] ||
+  [ "$(cast keccak "$implementation_code")" != "$(record .deployment.implementationRuntimeKeccak)" ]; then
+  echo "a deployment on chain $CHAIN_ID would differ from $HASHES" >&2
+  exit 1
+fi
+code_overrides="$code_overrides,$FACTORY:$factory_code,$IMPLEMENTATION:$implementation_code"
 
 operator_slot=$(cast index uint256 "$ID" "$LEAF_VOTER_TOKEN_STATES_SLOT")
 operator_word=$(cast storage "$LEAF_VOTER" "$operator_slot" --rpc-url "$RPC" --block "$BLOCK")
 with_operator() {
-  local operator fields_above_the_operator=${operator_word:0:26}
-  operator=$(echo "${1#0x}" | tr '[:upper:]' '[:lower:]')
-  echo "$LEAF_VOTER:$operator_slot:$fields_above_the_operator$operator"
+  local fields_above_the_operator=${operator_word:0:26}
+  echo "$LEAF_VOTER:$operator_slot:$fields_above_the_operator$(lowercase "${1#0x}")"
 }
 
-clone=$(simulate "operatorOf($DEPLOYMENT_TYPE,address)(address)" "$DEPLOYMENT" "$RECIPIENT")
-operator_read_back=$(cast call "$LEAF_VOTER" 'operator(uint256)(address)' "$ID" --rpc-url "$RPC" --block "$BLOCK" \
-  --override-state-diff "$(with_operator "$clone")")
+clone=$(call "$FACTORY" 'operatorOf(address)(address)' "$RECIPIENT")
+operator_read_back=$(call "$LEAF_VOTER" 'operator(uint256)(address)' "$ID" --override-state-diff "$(with_operator "$clone")")
 [ "$operator_read_back" = "$clone" ] || {
   echo "LeafVoter does not keep operators in slot $LEAF_VOTER_TOKEN_STATES_SLOT" >&2
   exit 1
@@ -72,11 +94,15 @@ paid_by_aero() {
     "$LEAF_VOTER" "$ID" "$RECIPIENT" "$max_gauges" "$fees_only" \
     --override-state-diff "$(with_operator "$SIMULATION")" --json | jq -c '.[0]' | tr -d '"'
 }
+prepare() {
+  local max_gauges=$1 fees_only=$2
+  simulate 'prepare(address,address,address,uint256,address,uint256,bool)(bytes)' \
+    "$FACTORY" "$LEAF_VOTER" "$FEE_SAFE" "$ID" "$RECIPIENT" "$max_gauges" "$fees_only"
+}
 claim_through_clone() {
-  local max_gauges=$1 fees_only=$2 entry_gas=$3 entries_per_call=$4 gas_per_call=$5 paid_by_aero=$6
-  simulate "claimThroughClone($DEPLOYMENT_TYPE,uint256,address,uint256,bool,uint256,uint256,uint256,uint256[])(uint8,uint256,uint256,uint256,uint256)" \
-    "$DEPLOYMENT" "$ID" "$RECIPIENT" "$max_gauges" "$fees_only" "$entry_gas" "$entries_per_call" "$gas_per_call" \
-    "$paid_by_aero" \
+  local entry_gas=$1 entries_per_call=$2 gas_per_call=$3 paid_by_aero=$4 prepared=$5
+  simulate 'claimThroughClone(uint256,address,uint256,uint256,uint256,uint256[],bytes)(uint8,uint256,uint256,uint256,uint256)' \
+    "$ID" "$RECIPIENT" "$entry_gas" "$entries_per_call" "$gas_per_call" "$paid_by_aero" "$prepared" \
     --override-state-diff "$(with_operator "$clone")" --json
 }
 
@@ -90,8 +116,8 @@ if nothing_in "$paid"; then
   echo "the stake has nothing to claim" >&2
   exit 1
 fi
-result=$(claim_through_clone "$MAX_GAUGES" "$EVERY_ENTRY" "$ENTRY_GAS" "$ENTRIES_PER_CALL" "$MAX_TRANSACTION_GAS" \
-  "$paid")
+result=$(claim_through_clone "$ENTRY_GAS" "$ENTRIES_PER_CALL" "$MAX_TRANSACTION_GAS" "$paid" \
+  "$(prepare "$MAX_GAUGES" "$EVERY_ENTRY")")
 [ "$(jq -j '.[0]' <<<"$result")" = "$OUTCOME_PAID_IN_FULL" ] || {
   echo "the clone did not pay the same: $result" >&2
   exit 1
@@ -102,7 +128,8 @@ unread_programs=$(jq -j '.[4]' <<<"$result")
 [ "$unread_programs" = 0 ] ||
   echo "warning: $unread_programs incentive programs were too old to read or could not be estimated"
 
-[ "$(simulate 'passesOnAllButOne64thOfItsGas()(bool)')" = true ] || {
+passes_on_all_but_one_64th=$(simulate 'passesOnAllButOne64thOfItsGas()(bool)')
+[ "$passes_on_all_but_one_64th" = true ] || {
   echo "a call on this chain does not pass on all but one 64th of its gas" >&2
   exit 1
 }
@@ -111,16 +138,19 @@ if nothing_in "$fees_of_one_gauge"; then
   echo "the first gauge owes no fees: the gas rules are not checked" >&2
   exit 1
 fi
+one_fee_entry=$(prepare "$GAS_RULE_GAUGES" "$FEES_ONLY")
 outcome_with() {
   local entry_gas=$1 gas=$2
-  claim_through_clone "$GAS_RULE_GAUGES" "$FEES_ONLY" "$entry_gas" "$ALL_ENTRIES_IN_ONE_CALL" "$gas" \
-    "$fees_of_one_gauge" | jq -j '.[0]'
+  claim_through_clone "$entry_gas" "$ALL_ENTRIES_IN_ONE_CALL" "$gas" "$fees_of_one_gauge" "$one_fee_entry" |
+    jq -j '.[0]'
 }
-[ "$(outcome_with "$STARVING_ENTRY_GAS" "$AMPLE_GAS")" = "$OUTCOME_PAID_NOTHING" ] || {
+outcome=$(outcome_with "$STARVING_ENTRY_GAS" "$AMPLE_GAS")
+[ "$outcome" = "$OUTCOME_PAID_NOTHING" ] || {
   echo "a starved entry did not fail alone" >&2
   exit 1
 }
-[ "$(outcome_with "$ENTRY_GAS" "$AMPLE_GAS")" = "$OUTCOME_PAID_IN_FULL" ] || {
+outcome=$(outcome_with "$ENTRY_GAS" "$AMPLE_GAS")
+[ "$outcome" = "$OUTCOME_PAID_IN_FULL" ] || {
   echo "the first gauge's fee entry needs more than $ENTRY_GAS gas" >&2
   exit 1
 }
@@ -129,7 +159,8 @@ too_little_entry_gas=$STARVING_ENTRY_GAS
 least_entry_gas=$ENTRY_GAS
 while [ $((least_entry_gas - too_little_entry_gas)) -gt 1 ]; do
   halfway=$(((too_little_entry_gas + least_entry_gas) / 2))
-  if [ "$(outcome_with "$halfway" "$AMPLE_GAS")" = "$OUTCOME_PAID_IN_FULL" ]; then
+  outcome=$(outcome_with "$halfway" "$AMPLE_GAS")
+  if [ "$outcome" = "$OUTCOME_PAID_IN_FULL" ]; then
     least_entry_gas=$halfway
   else
     too_little_entry_gas=$halfway
@@ -151,4 +182,5 @@ while [ $((least_gas - reverts_with)) -gt 1 ]; do
   fi
 done
 echo "gas rules: a call passes on all but one 64th of its gas; a fee entry given $STARVING_ENTRY_GAS gas fails" \
-  "alone; given the $least_entry_gas it needs, its claim reverts below $least_gas gas and pays in full from there"
+  "alone; given the $least_entry_gas it needs, a first claim reverts below $least_gas gas, intrinsic gas aside," \
+  "and pays in full from there"

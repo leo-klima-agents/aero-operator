@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.37;
+pragma solidity 0.8.38;
 
 import {Test, Vm} from "forge-std/Test.sol";
 
@@ -247,6 +247,26 @@ abstract contract ForkTest is Test {
 
         logs = _claim();
         assertEq(_count(logs, CLAIM_FAILED), 0);
+        _assertNothingLeft();
+    }
+
+    function test_sweep_paysTheWrappedAndNativeTokensAClaimLeaves() public {
+        _setOperator(address(operator));
+        _claim();
+        deal(wrappedNative, address(operator), 1 ether);
+        vm.deal(address(operator), 2 ether);
+        uint256[2] memory held = [IERC20(wrappedNative).balanceOf(recipient), recipient.balance];
+        uint256[2] memory feesHeld = [IERC20(wrappedNative).balanceOf(feeRecipient), feeRecipient.balance];
+
+        vm.startPrank(keeper);
+        operator.sweep(wrappedNative);
+        operator.sweep(address(0));
+        vm.stopPrank();
+
+        assertEq(IERC20(wrappedNative).balanceOf(recipient) - held[0], 0.99 ether);
+        assertEq(IERC20(wrappedNative).balanceOf(feeRecipient) - feesHeld[0], 0.01 ether);
+        assertEq(recipient.balance - held[1], 1.98 ether);
+        assertEq(feeRecipient.balance - feesHeld[1], 0.02 ether);
         _assertNothingLeft();
     }
 

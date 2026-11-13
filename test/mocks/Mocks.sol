@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.37;
+pragma solidity 0.8.38;
 
 import {ILeafVoter} from "../../src/interfaces/ILeafVoter.sol";
 
@@ -58,6 +58,12 @@ contract MockWrappedNative {
         balanceOf[msg.sender] -= amount;
         (bool ok,) = msg.sender.call{value: amount}("");
         require(ok, "withdraw failed");
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
     }
 }
 

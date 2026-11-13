@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.37;
+pragma solidity 0.8.38;
 
 import {Test} from "forge-std/Test.sol";
 
@@ -18,29 +18,28 @@ import {
 
 uint256 constant ENTRY_GAS = 1_000_000;
 uint256 constant RESERVED_GAS = 20_000;
-uint256 constant USED_BY_THE_FACTORY = 4374;
+uint256 constant USED_BY_THE_FACTORY = 4371;
 uint256 constant USED_TO_DEPLOY_A_CLONE = 45_094;
 uint256 constant USED_BY_THE_PROXY = 2624;
-uint256 constant USED_BEFORE_ONE_FEE_ENTRY = 4146;
+uint256 constant USED_BEFORE_ONE_FEE_ENTRY = 4157;
 
 contract Reenterer {
-    ImmutableClaimOperatorFactory internal immutable FACTORY;
+    address internal immutable TARGET;
     bool internal immutable BUBBLE;
+    bytes internal reentry;
     bytes public reason;
 
-    constructor(ImmutableClaimOperatorFactory factory, bool bubble) {
-        FACTORY = factory;
+    constructor(address target, bytes memory reentry_, bool bubble) {
+        TARGET = target;
         BUBBLE = bubble;
+        reentry = reentry_;
     }
 
     receive() external payable {
-        try FACTORY.claim(
-            address(this), 1, new ILeafVoter.FeeClaim[](0), new ILeafVoter.IncentiveClaim[](0), ENTRY_GAS
-        ) {}
-        catch (bytes memory err) {
-            reason = err;
-            if (BUBBLE) revert("reentered");
-        }
+        (bool ok, bytes memory err) = TARGET.call(reentry);
+        if (ok) return;
+        reason = err;
+        if (BUBBLE) revert("reentered");
     }
 }
 
@@ -73,6 +72,7 @@ contract OperatorTest is Test {
 
     event Claimed(uint256 indexed tokenId, address indexed token, uint256 amount, uint256 fee);
     event ClaimFailed(uint256 indexed tokenId, address indexed votingRewardsManager, bool fees, uint256 programId);
+    event Swept(address indexed token, uint256 amount, uint256 fee);
 
     function setUp() public {
         feeRecipient = address(new MockSafe());
@@ -116,7 +116,21 @@ contract OperatorTest is Test {
     }
 
     function _gasToHoldToPassOn(uint256 gas) internal pure returns (uint256) {
-        return gas + gas / 63;
+        return gas + (gas - 1) / 63;
+    }
+
+    function _reenterer(bytes memory reentry, bool bubble)
+        internal
+        returns (Reenterer reenterer, ImmutableClaimOperator clone)
+    {
+        address next = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        clone = ImmutableClaimOperator(payable(factory.operatorOf(next)));
+        reenterer = new Reenterer(address(clone), reentry, bubble);
+        voter.setOperator(ID, address(clone));
+    }
+
+    function _claimNothing() internal pure returns (bytes memory) {
+        return abi.encodeCall(ImmutableClaimOperator.claim, (ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS));
     }
 
     function _leastGas(address target, bytes memory data) internal returns (uint256 goesThrough) {
@@ -402,9 +416,7 @@ contract OperatorTest is Test {
     }
 
     function test_claim_cannotBeReentered() public {
-        Reenterer reenterer = new Reenterer(factory, false);
-        ImmutableClaimOperator clone = ImmutableClaimOperator(payable(factory.operatorOf(address(reenterer))));
-        voter.setOperator(ID, address(clone));
+        (Reenterer reenterer, ImmutableClaimOperator clone) = _reenterer(_claimNothing(), false);
         _owe(native, 1 ether, 3e6);
 
         factory.claim(address(reenterer), ID, _fees(native), _none(), ENTRY_GAS);
@@ -412,12 +424,33 @@ contract OperatorTest is Test {
         assertEq(bytes4(reenterer.reason()), ImmutableClaimOperator.Reentrancy.selector);
         assertEq(address(reenterer).balance, 0.99 ether);
         assertEq(usdc.balanceOf(address(reenterer)), 2.97e6);
+        assertEq(address(clone).balance, 0);
+    }
+
+    function test_claim_cannotBeReenteredFromAnIncentive() public {
+        (Reenterer reenterer,) = _reenterer(_claimNothing(), false);
+        uint256 programId = pair.addIncentive(address(weth));
+        _fund(pair, address(weth), 1 ether);
+        pair.setIncentive(ID, programId, 1 ether);
+
+        factory.claim(address(reenterer), ID, new ILeafVoter.FeeClaim[](0), _incentive(pair, programId), ENTRY_GAS);
+
+        assertEq(bytes4(reenterer.reason()), ImmutableClaimOperator.Reentrancy.selector);
+        assertEq(address(reenterer).balance, 0.99 ether);
+    }
+
+    function test_claim_cannotBeReenteredBySweep() public {
+        (Reenterer reenterer,) = _reenterer(abi.encodeCall(ImmutableClaimOperator.sweep, (address(0))), false);
+        _owe(native, 1 ether, 3e6);
+
+        factory.claim(address(reenterer), ID, _fees(native), _none(), ENTRY_GAS);
+
+        assertEq(bytes4(reenterer.reason()), ImmutableClaimOperator.Reentrancy.selector);
+        assertEq(address(reenterer).balance, 0.99 ether);
     }
 
     function test_claim_rollsBackWhenAReentryBubblesUp() public {
-        Reenterer reenterer = new Reenterer(factory, true);
-        ImmutableClaimOperator clone = ImmutableClaimOperator(payable(factory.operatorOf(address(reenterer))));
-        voter.setOperator(ID, address(clone));
+        (Reenterer reenterer, ImmutableClaimOperator clone) = _reenterer(_claimNothing(), true);
         _owe(native, 1 ether, 3e6);
 
         _expectFailed(address(clone), address(native), 0);
@@ -426,6 +459,39 @@ contract OperatorTest is Test {
         assertEq(address(reenterer).balance, 0);
         assertEq(address(clone).balance, 0);
         assertEq(address(native).balance + weth.balanceOf(address(native)), 1 ether);
+    }
+
+    function test_claim_rollsBackWhenTheFeeCannotBePaid() public {
+        usdc.setBlocked(feeRecipient, true);
+        _owe(pair, 1e18, 2e6);
+
+        _expectFailed(address(operator), address(pair), 0);
+        factory.claim(recipient, ID, _fees(pair), _none(), ENTRY_GAS);
+
+        assertEq(aero.balanceOf(recipient), 0);
+        assertEq(usdc.balanceOf(recipient), 0);
+        assertEq(aero.balanceOf(address(pair)), 1e18);
+        _assertNothingLeft();
+    }
+
+    function test_claim_emitsNothingForATokenThatPaidNothing() public {
+        _owe(pair, 1e18, 0);
+
+        vm.recordLogs();
+        factory.claim(recipient, ID, _fees(pair), _none(), ENTRY_GAS);
+
+        assertEq(vm.getRecordedLogs().length, 1);
+    }
+
+    function test_claim_withLessThanTheReserveLeft_revertsWithInsufficientGas() public {
+        factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+
+        (bool ok, bytes memory err) = address(operator).call{gas: 15_000}(
+            abi.encodeCall(ImmutableClaimOperator.claim, (ID, _fees(pair), _none(), 1))
+        );
+
+        assertFalse(ok);
+        assertEq(bytes4(err), ImmutableClaimOperator.InsufficientGas.selector);
     }
 
     function test_claim_aBudgetTooSmall_failsTheEntriesAndKeepsTheRewards() public {
@@ -457,7 +523,7 @@ contract OperatorTest is Test {
 
     function test_claim_leastGasFollowsTheFormula() public {
         _owe(pair, 1e18, 2e6);
-        uint256[4] memory budgets = [uint256(300_000), 1_000_000, 2_345_678, 5_000_000];
+        uint256[5] memory budgets = [uint256(300_000), 630_000, 1_000_000, 2_345_678, 5_000_000];
         uint256 beforeTheClone = vm.snapshotState();
 
         for (uint256 i; i < budgets.length; ++i) {
@@ -520,6 +586,94 @@ contract OperatorTest is Test {
 
         assertGt(forFees, 1_300_000);
         assertApproxEqAbs(forAnIncentive, forFees, 50_000);
+    }
+
+    function test_sweep_paysWhatTheCloneHolds() public {
+        factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+        usdc.mint(address(operator), 10e6);
+        vm.deal(address(this), 2 ether);
+        weth.mint{value: 2 ether}(address(operator));
+        vm.deal(address(operator), 1 ether);
+
+        vm.startPrank(makeAddr("anyone"));
+        vm.expectEmit(address(operator));
+        emit Swept(address(usdc), 10e6, 0.1e6);
+        operator.sweep(address(usdc));
+        vm.expectEmit(address(operator));
+        emit Swept(address(weth), 2 ether, 0.02 ether);
+        operator.sweep(address(weth));
+        vm.expectEmit(address(operator));
+        emit Swept(address(0), 1 ether, 0.01 ether);
+        operator.sweep(address(0));
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(recipient), 9.9e6);
+        assertEq(usdc.balanceOf(feeRecipient), 0.1e6);
+        assertEq(weth.balanceOf(recipient), 1.98 ether);
+        assertEq(weth.balanceOf(feeRecipient), 0.02 ether);
+        assertEq(recipient.balance, 0.99 ether);
+        assertEq(feeRecipient.balance, 0.01 ether);
+        _assertNothingLeft();
+    }
+
+    function test_sweep_ofNothing_doesNothing() public {
+        factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+
+        vm.recordLogs();
+        operator.sweep(address(usdc));
+        operator.sweep(address(0));
+
+        assertEq(vm.getRecordedLogs().length, 0);
+    }
+
+    function test_sweep_onBase_paysARecipientWithoutTheStake() public {
+        factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+        usdc.mint(address(operator), 10e6);
+        vm.chainId(BASE);
+        escrow.setOwner(ID, makeAddr("buyer"));
+        vm.expectRevert(ImmutableClaimOperator.NotOwner.selector);
+        factory.claim(recipient, ID, _fees(pair), _none(), ENTRY_GAS);
+
+        operator.sweep(address(usdc));
+
+        assertEq(usdc.balanceOf(recipient), 9.9e6);
+        assertEq(usdc.balanceOf(feeRecipient), 0.1e6);
+    }
+
+    function test_sweep_paysNothingIfATransferFails() public {
+        factory.claim(recipient, ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+        usdc.mint(address(operator), 10e6);
+        usdc.setBlocked(recipient, true);
+
+        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.TransferFailed.selector, address(usdc)));
+        operator.sweep(address(usdc));
+
+        assertEq(usdc.balanceOf(address(operator)), 10e6);
+        assertEq(usdc.balanceOf(feeRecipient), 0);
+    }
+
+    function test_sweep_cannotBeReenteredNorReenterAClaim() public {
+        (Reenterer bySweep, ImmutableClaimOperator clone) =
+            _reenterer(abi.encodeCall(ImmutableClaimOperator.sweep, (address(0))), false);
+        factory.claim(address(bySweep), ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+        vm.deal(address(clone), 1 ether);
+        clone.sweep(address(0));
+        assertEq(bytes4(bySweep.reason()), ImmutableClaimOperator.Reentrancy.selector);
+        assertEq(address(bySweep).balance, 0.99 ether);
+
+        (Reenterer byClaim, ImmutableClaimOperator other) = _reenterer(_claimNothing(), false);
+        factory.claim(address(byClaim), ID, new ILeafVoter.FeeClaim[](0), _none(), ENTRY_GAS);
+        vm.deal(address(other), 1 ether);
+        other.sweep(address(0));
+        assertEq(bytes4(byClaim.reason()), ImmutableClaimOperator.Reentrancy.selector);
+        assertEq(address(byClaim).balance, 0.99 ether);
+    }
+
+    function test_sweep_notOnTheImplementation() public {
+        ImmutableClaimOperator implementation = ImmutableClaimOperator(payable(factory.implementation()));
+
+        vm.expectRevert(ImmutableClaimOperator.NotClone.selector);
+        implementation.sweep(address(usdc));
     }
 
     function test_claimEntry_onlyFromTheCloneItself() public {

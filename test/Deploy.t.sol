@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.37;
+pragma solidity 0.8.38;
 
 import {Test} from "forge-std/Test.sol";
 
@@ -47,6 +47,45 @@ contract DeployTest is Test {
 
         assertEq(d.run(), first);
         assertEq(first.codehash, codehash);
+    }
+
+    function test_deploy_refusesABuildThatDiffersFromTheRecord() public {
+        string memory record = vm.readFile("verification/bytecode-hashes.json");
+        string memory another = vm.replace(record, vm.toString(d.predict()), vm.toString(address(1)));
+
+        vm.expectRevert(bytes("build differs from the record"));
+        d.deploy(another);
+    }
+
+    function test_deploy_refusesCodeThatDiffersFromTheRecord() public {
+        string memory record = vm.readFile("verification/bytecode-hashes.json");
+        string[2] memory keys = [".deployment.factoryRuntimeKeccak", ".deployment.implementationRuntimeKeccak"];
+        for (uint256 i; i < keys.length; ++i) {
+            string memory recorded = vm.toString(vm.parseJsonBytes32(record, keys[i]));
+            string memory another = vm.replace(record, recorded, vm.toString(bytes32(uint256(1))));
+            uint256 snapshot = vm.snapshotState();
+
+            vm.expectRevert(bytes("deployed code differs from the record"));
+            d.deploy(another);
+            vm.revertToState(snapshot);
+        }
+    }
+
+    function test_run_refusesOtherCodeAtTheAddress() public {
+        vm.etch(d.predict(), hex"00");
+
+        vm.expectRevert(bytes("deployed code differs from the record"));
+        d.run();
+    }
+
+    function test_run_failsIfTheDeployerDeploysNothing() public {
+        vm.etch(CREATE2_FACTORY, hex"00");
+        vm.expectRevert(bytes("deployed code differs from the record"));
+        d.run();
+
+        vm.etch(CREATE2_FACTORY, hex"fd");
+        vm.expectRevert(bytes("CREATE2 deploy failed"));
+        d.run();
     }
 
     function test_run_failsWithoutTheDeployer() public {
