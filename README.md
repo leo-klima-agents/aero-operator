@@ -51,9 +51,10 @@ Neither contract has an owner, settings or an upgrade path:
   `userRewardCheckpointIndex(tokenId)` is not 0. `incentiveCount()` on a manager gives its programs, numbered from 1.
   `earnedFees` and `earnedIncentives` on a manager estimate a claim.
 - **Entry gas.** A stake's first fee claim from a manager is the heaviest. `script/simulate.sh` prints what a stake's
-  first fee entry needs: up to 884,329, on Arc, on 2026-11-13. An entry that needs more than `entryGas` fails and can
-  be claimed again. One that needs less uses less, so a high `entryGas` only raises the gas limit. The tests and the
-  simulation use 1,000,000, and 500 for `maxCheckpoints`.
+  first fee entry needs. It moves with the stake's state: between about 415,000 and 890,000 across the eight chains
+  on 2026-11-13. An entry that needs more than `entryGas` fails and can be claimed again. One that needs less uses
+  less, so a high `entryGas` only raises the gas limit. The tests and the simulation use 1,000,000, and 500 for
+  `maxCheckpoints`.
 - **Gas limit.** A claim through the factory reverts with less than
 
       I + F + g(P + g(U + 20,000 + g(entryGas)))        where g(x) = x + ⌊(x − 1) / 63⌋
