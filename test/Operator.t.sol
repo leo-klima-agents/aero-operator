@@ -508,7 +508,7 @@ contract OperatorTest is Test {
     }
 
     function test_claim_pointsToBlockNumberWhereArbSysDoesNotAnswer() public {
-        bytes[3] memory codes = [bytes(""), hex"00", hex"60006000fd"];
+        bytes[4] memory codes = [bytes(""), hex"00", hex"60006000fd", hex"60205ffd"];
         for (uint256 i; i < codes.length; ++i) {
             vm.etch(address(100), codes[i]);
             vm.roll(200 + i);
@@ -518,7 +518,7 @@ contract OperatorTest is Test {
 
             assertEq(operator.lastClaimBlock(), 200 + i);
         }
-        assertEq(aero.balanceOf(recipient), 2.97e18);
+        assertEq(aero.balanceOf(recipient), 3.96e18);
     }
 
     function test_claim_givesEveryEntryItsGas() public {
