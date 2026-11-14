@@ -7,8 +7,8 @@ import {ILeafVoter} from "./interfaces/ILeafVoter.sol";
 contract ImmutableClaimOperatorFactory {
     address public immutable implementation;
 
-    constructor(address leafVoter, address escrow, uint256 baseChainId, address feeRecipient) {
-        implementation = address(new ImmutableClaimOperator(leafVoter, escrow, baseChainId, feeRecipient));
+    constructor(address leafVoter, address escrow, uint256 baseChainId) {
+        implementation = address(new ImmutableClaimOperator(leafVoter, escrow, baseChainId));
     }
 
     function claim(

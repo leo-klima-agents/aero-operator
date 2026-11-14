@@ -3,6 +3,7 @@ pragma solidity 0.8.38;
 
 import {Test} from "forge-std/Test.sol";
 
+import {Deploy} from "../script/Deploy.s.sol";
 import {ImmutableClaimOperator} from "../src/ImmutableClaimOperator.sol";
 import {ImmutableClaimOperatorFactory} from "../src/ImmutableClaimOperatorFactory.sol";
 import {ILeafVoter} from "../src/interfaces/ILeafVoter.sol";
@@ -55,10 +56,11 @@ contract OperatorTest is Test {
     ImmutableClaimOperatorFactory internal factory;
     ImmutableClaimOperator internal operator;
     address internal recipient = makeAddr("recipient");
-    address internal feeRecipient;
+    address internal treasury;
 
     function setUp() public {
-        feeRecipient = address(new MockSafe());
+        treasury = new Deploy().TREASURY();
+        vm.etch(treasury, address(new MockSafe()).code);
         registry = new MockFactoryRegistry();
         voter = new MockLeafVoter(address(registry));
         escrow = new MockVotingEscrow();
@@ -68,7 +70,7 @@ contract OperatorTest is Test {
         pair = _manager(address(aero), address(usdc));
         wethPair = _manager(address(weth), address(usdc));
 
-        factory = new ImmutableClaimOperatorFactory(address(voter), address(escrow), BASE, feeRecipient);
+        factory = new ImmutableClaimOperatorFactory(address(voter), address(escrow), BASE);
         operator = ImmutableClaimOperator(payable(factory.operatorOf(recipient)));
         voter.setOperator(TOKEN_ID, address(operator));
     }
@@ -220,12 +222,13 @@ contract OperatorTest is Test {
         }
     }
 
-    function test_constructor_needsTheFeeSafeToHaveCode() public {
-        address none = makeAddr("none");
-        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.NoCode.selector, none));
-        new ImmutableClaimOperator(address(voter), address(escrow), BASE, none);
-        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.NoCode.selector, none));
-        new ImmutableClaimOperatorFactory(address(voter), address(escrow), BASE, none);
+    function test_constructor_needsTheTreasuryToHaveCode() public {
+        vm.etch(treasury, "");
+
+        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.NoCode.selector, treasury));
+        new ImmutableClaimOperator(address(voter), address(escrow), BASE);
+        vm.expectRevert(abi.encodeWithSelector(ImmutableClaimOperator.NoCode.selector, treasury));
+        new ImmutableClaimOperatorFactory(address(voter), address(escrow), BASE);
     }
 
     function test_implementation_isNotAClone() public {
@@ -290,11 +293,11 @@ contract OperatorTest is Test {
         factory.claim(recipient, TOKEN_ID, _fees(pair, wethPair), _noIncentives(), ENTRY_GAS);
 
         assertEq(aero.balanceOf(recipient), 0.99e18);
-        assertEq(aero.balanceOf(feeRecipient), 0.01e18);
+        assertEq(aero.balanceOf(treasury), 0.01e18);
         assertEq(usdc.balanceOf(recipient), 6.93e6);
-        assertEq(usdc.balanceOf(feeRecipient), 0.07e6);
+        assertEq(usdc.balanceOf(treasury), 0.07e6);
         assertEq(recipient.balance, 2.97 ether);
-        assertEq(feeRecipient.balance, 0.03 ether);
+        assertEq(treasury.balance, 0.03 ether);
         assertEq(pair.lastMaxCheckpoints(), MAX_CHECKPOINTS);
         _assertNothingLeft();
     }
@@ -313,9 +316,9 @@ contract OperatorTest is Test {
         factory.claim(recipient, TOKEN_ID, new ILeafVoter.FeeClaim[](0), claims, ENTRY_GAS);
 
         assertEq(usdc.balanceOf(recipient), 99e6);
-        assertEq(usdc.balanceOf(feeRecipient), 1e6);
+        assertEq(usdc.balanceOf(treasury), 1e6);
         assertEq(recipient.balance, 0.99 ether);
-        assertEq(feeRecipient.balance, 0.01 ether);
+        assertEq(treasury.balance, 0.01 ether);
         assertEq(pair.lastMaxCheckpoints(), 77);
         _assertNothingLeft();
     }
@@ -326,9 +329,9 @@ contract OperatorTest is Test {
         factory.claim(recipient, TOKEN_ID, _fees(pair), _noIncentives(), ENTRY_GAS);
 
         assertEq(aero.balanceOf(recipient), 99);
-        assertEq(aero.balanceOf(feeRecipient), 0);
+        assertEq(aero.balanceOf(treasury), 0);
         assertEq(usdc.balanceOf(recipient), 99);
-        assertEq(usdc.balanceOf(feeRecipient), 1);
+        assertEq(usdc.balanceOf(treasury), 1);
     }
 
     function test_claim_leavesWhatTheCloneHeldBefore() public {
@@ -367,7 +370,7 @@ contract OperatorTest is Test {
         assertEq(owed1, 7e18);
         assertEq(bad.balanceOf(address(broken)), 5e18);
         assertEq(aero.balanceOf(address(broken)), 7e18);
-        assertEq(bad.balanceOf(feeRecipient), 0);
+        assertEq(bad.balanceOf(treasury), 0);
         assertEq(bad.balanceOf(address(operator)), 0);
         _assertNothingLeft();
 
@@ -384,7 +387,7 @@ contract OperatorTest is Test {
         factory.claim(recipient, TOKEN_ID, _fees(pair), _noIncentives(), ENTRY_GAS);
 
         assertEq(usdc.balanceOf(recipient), 1.98e6);
-        assertEq(usdc.balanceOf(feeRecipient), 0.02e6);
+        assertEq(usdc.balanceOf(treasury), 0.02e6);
     }
 
     function test_claim_rollsBackWhenTheRecipientRefusesNativeTokens() public {
@@ -397,7 +400,7 @@ contract OperatorTest is Test {
         factory.claim(refuser, TOKEN_ID, _fees(wethPair), _noIncentives(), ENTRY_GAS);
 
         assertEq(address(clone).balance, 0);
-        assertEq(feeRecipient.balance, 0);
+        assertEq(treasury.balance, 0);
         assertEq(usdc.balanceOf(refuser), 0);
         (uint256 owed0, uint256 owed1) = wethPair.fees(TOKEN_ID);
         assertEq(owed0, 1 ether);
@@ -463,7 +466,7 @@ contract OperatorTest is Test {
     }
 
     function test_claim_rollsBackWhenTheFeeCannotBePaid() public {
-        usdc.setBlocked(feeRecipient, true);
+        usdc.setBlocked(treasury, true);
         _owe(pair, 1e18, 2e6);
 
         _expectFailed(address(operator), address(pair), true, 0);
@@ -705,11 +708,11 @@ contract OperatorTest is Test {
 
         factory.claim(recipient, TOKEN_ID, _fees(pair, wethPair), _noIncentives(), ENTRY_GAS);
 
-        assertEq(aero.balanceOf(feeRecipient), amount0 / 100);
+        assertEq(aero.balanceOf(treasury), amount0 / 100);
         assertEq(aero.balanceOf(recipient), amount0 - amount0 / 100);
-        assertEq(usdc.balanceOf(feeRecipient), amount1 / 100);
+        assertEq(usdc.balanceOf(treasury), amount1 / 100);
         assertEq(usdc.balanceOf(recipient), amount1 - amount1 / 100);
-        assertEq(feeRecipient.balance, amountNative / 100);
+        assertEq(treasury.balance, amountNative / 100);
         assertEq(recipient.balance, amountNative - amountNative / 100);
         _assertNothingLeft();
     }
@@ -761,11 +764,11 @@ contract OperatorTest is Test {
         vm.stopPrank();
 
         assertEq(usdc.balanceOf(recipient), 9.9e6);
-        assertEq(usdc.balanceOf(feeRecipient), 0.1e6);
+        assertEq(usdc.balanceOf(treasury), 0.1e6);
         assertEq(weth.balanceOf(recipient), 1.98 ether);
-        assertEq(weth.balanceOf(feeRecipient), 0.02 ether);
+        assertEq(weth.balanceOf(treasury), 0.02 ether);
         assertEq(recipient.balance, 0.99 ether);
-        assertEq(feeRecipient.balance, 0.01 ether);
+        assertEq(treasury.balance, 0.01 ether);
         _assertNothingLeft();
     }
 
@@ -811,7 +814,7 @@ contract OperatorTest is Test {
 
         assertEq(operator.recipient(), recipient);
         assertEq(usdc.balanceOf(recipient), 9.9e6);
-        assertEq(usdc.balanceOf(feeRecipient), 0.1e6);
+        assertEq(usdc.balanceOf(treasury), 0.1e6);
     }
 
     function test_sweep_ofAnAddressWithoutCode_reverts() public {

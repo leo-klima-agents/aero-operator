@@ -16,7 +16,7 @@ contract Simulation {
 
     struct Prepared {
         Discovery.Claims claims;
-        address feeRecipient;
+        address treasury;
         address clone;
         address factory;
         address implementation;
@@ -61,7 +61,6 @@ contract Simulation {
     function prepare(
         ImmutableClaimOperatorFactory factory,
         address leafVoter,
-        address feeRecipient,
         uint256 tokenId,
         address recipient,
         uint256 maxGauges,
@@ -70,12 +69,12 @@ contract Simulation {
         Prepared memory p;
         p.claims = Discovery.claims(leafVoter, tokenId, maxGauges, false);
         if (feesOnly) p.claims.incentives = new ILeafVoter.IncentiveClaim[](0);
-        p.feeRecipient = feeRecipient;
         p.clone = factory.operatorOf(recipient);
         p.factory = address(factory);
         p.implementation = factory.implementation();
+        p.treasury = ImmutableClaimOperator(payable(p.implementation)).TREASURY();
         p.held = Discovery.balances(p.claims.tokens, recipient);
-        p.feesHeld = Discovery.balances(p.claims.tokens, feeRecipient);
+        p.feesHeld = Discovery.balances(p.claims.tokens, p.treasury);
         return abi.encode(p);
     }
 
@@ -118,7 +117,7 @@ contract Simulation {
         }
 
         uint256[] memory paid = Discovery.gained(p.claims.tokens, recipient, p.held);
-        uint256[] memory taken = Discovery.gained(p.claims.tokens, p.feeRecipient, p.feesHeld);
+        uint256[] memory taken = Discovery.gained(p.claims.tokens, p.treasury, p.feesHeld);
         address[3] memory ours = [p.clone, p.factory, p.implementation];
         bool inFull = true;
         bool nothing = true;

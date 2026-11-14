@@ -31,7 +31,7 @@ fail() {
 LEAF_VOTER=$(record .deployment.leafVoter)
 ESCROW=$(record .deployment.escrow)
 BASE_CHAIN_ID=$(record .deployment.baseChainId)
-FEE_SAFE=$(record .deployment.feeRecipient)
+TREASURY=$(record .deployment.treasury)
 FACTORY=$(record .deployment.factory)
 IMPLEMENTATION=$(record .deployment.implementation)
 SIMULATION=0x0000000000000000000000000000000000515151
@@ -46,11 +46,11 @@ else
 fi
 
 code_overrides="$SIMULATION:$(jq -j .deployedBytecode.object out/Simulation.sol/Simulation.json)"
-fee_safe_code=$(cast code "$FEE_SAFE" --block "$BLOCK")
-if [ "$fee_safe_code" = 0x ]; then
-  echo "the fee Safe is not on chain $CHAIN_ID: a contract that only accepts payments stands in for it"
+treasury_code=$(cast code "$TREASURY" --block "$BLOCK")
+if [ "$treasury_code" = 0x ]; then
+  echo "the treasury is not on chain $CHAIN_ID: a contract that only accepts payments stands in for it"
   accepts_payments=0x00
-  code_overrides="$code_overrides,$FEE_SAFE:$accepts_payments"
+  code_overrides="$code_overrides,$TREASURY:$accepts_payments"
 fi
 call() {
   cast call "$@" --block "$BLOCK" --override-code "$code_overrides"
@@ -84,8 +84,8 @@ operator_read_back=$(call "$LEAF_VOTER" 'operator(uint256)(address)' "$ID" --ove
 
 prepare() {
   local max_gauges=$1 fees_only=$2
-  simulate 'prepare(address,address,address,uint256,address,uint256,bool)(bytes)' \
-    "$FACTORY" "$LEAF_VOTER" "$FEE_SAFE" "$ID" "$RECIPIENT" "$max_gauges" "$fees_only"
+  simulate 'prepare(address,address,uint256,address,uint256,bool)(bytes)' \
+    "$FACTORY" "$LEAF_VOTER" "$ID" "$RECIPIENT" "$max_gauges" "$fees_only"
 }
 paid_by_aero() {
   local prepared=$1

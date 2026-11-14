@@ -26,9 +26,9 @@ expect .creationCodeKeccak "$(cast keccak "$creation")"
 expect .solc "$(jq -j '.metadata.compiler.version' "$ARTIFACT")"
 expect .salt "$(cast keccak "$(jq -j .saltPreimage "$HASHES")")"
 
-args=$(cast abi-encode 'constructor(address,address,uint256,address)' \
+args=$(cast abi-encode 'constructor(address,address,uint256)' \
   "$(jq -j .deployment.leafVoter "$HASHES")" "$(jq -j .deployment.escrow "$HASHES")" \
-  "$(jq -j .deployment.baseChainId "$HASHES")" "$(jq -j .deployment.feeRecipient "$HASHES")")
+  "$(jq -j .deployment.baseChainId "$HASHES")")
 expect .deployment.constructorArgs "$args"
 factory=$(cast compute-address "$(jq -j .create2Deployer "$HASHES")" --salt "$(jq -j .salt "$HASHES")" --init-code "${creation}${args#0x}")
 expect .deployment.factory "$factory"
@@ -44,7 +44,7 @@ else
 fi
 
 for key in .deployment.factory .deployment.implementation .deployment.leafVoter .deployment.escrow \
-  .deployment.feeRecipient .create2Deployer .saltPreimage; do
+  .deployment.treasury .create2Deployer .saltPreimage; do
   value=$(jq -j "$key" "$HASHES")
   if grep -qF "$value" README.md; then
     echo "README.md $key ok"

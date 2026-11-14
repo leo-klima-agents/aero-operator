@@ -14,7 +14,7 @@ contract DeployTest is Test {
     function setUp() public {
         d = new Deploy();
         record = vm.readFile("verification/bytecode-hashes.json");
-        vm.etch(d.FEE_RECIPIENT(), hex"00");
+        vm.etch(d.TREASURY(), hex"00");
     }
 
     function test_run_deploysTheRecordedCodeAtThePredictedAddresses() public {
@@ -33,7 +33,7 @@ contract DeployTest is Test {
         assertEq(implementation.leafVoter(), d.LEAF_VOTER());
         assertEq(implementation.escrow(), d.ESCROW());
         assertEq(implementation.baseChainId(), d.BASE_CHAIN_ID());
-        assertEq(implementation.feeRecipient(), d.FEE_RECIPIENT());
+        assertEq(implementation.TREASURY(), d.TREASURY());
     }
 
     function test_run_deploysToAddressesThatHoldNativeTokens() public {
@@ -94,9 +94,9 @@ contract DeployTest is Test {
         d.run();
     }
 
-    function test_run_failsWithoutTheFeeSafe() public {
-        vm.etch(d.FEE_RECIPIENT(), "");
-        vm.expectRevert(bytes("fee Safe not present"));
+    function test_run_failsWithoutTheTreasury() public {
+        vm.etch(d.TREASURY(), "");
+        vm.expectRevert(bytes("treasury not present"));
         d.run();
     }
 }

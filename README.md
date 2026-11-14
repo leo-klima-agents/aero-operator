@@ -3,7 +3,7 @@
 `ImmutableClaimOperator` claims an Aero stake's rewards for one fixed recipient. A stake's owner names the recipient's
 clone as the stake's operator on a chain, with `setOperator(tokenId, chainId, operator, gasLimit, refundTo)` on Aero's
 Voter on Base, `0x49d7d4f17Ec56Ef8fA04E464AF5D1A4942CC31e6`. Anyone can then claim the stake's rewards there through
-the clone, which pays 1% to a fee Safe and the rest to the recipient. Setting the zero address or another operator
+the clone, which pays 1% to a fixed treasury and the rest to the recipient. Setting the zero address or another operator
 ends it once the message reaches the chain.
 
 Neither contract has an owner, settings or an upgrade path. [`ImmutableClaimOperator`](src/ImmutableClaimOperator.sol)
@@ -21,7 +21,7 @@ holds the code, a recipient's clone is a 65-byte ERC-1167 proxy to it that ends 
   then calls the clone's `claim(tokenId, feeClaims, incentiveClaims, entryGas)`. Anyone can call either. The two lists
   are those of the LeafVoter's `claimRewards`.
 - The clone claims each entry on its own, to itself, from a rewards manager that the LeafVoter's `FACTORY_REGISTRY`
-  lists. It then sends 1% of what it received in each token, rounded down, to the fee Safe, and the rest to the
+  lists. It then sends 1% of what it received in each token, rounded down, to the treasury, and the rest to the
   recipient. A manager pays its `wrappedNative` token in native tokens, and the clone forwards those.
 - An entry that fails is undone: its rewards stay in the rewards manager, the clone emits
   `ClaimFailed(tokenId, votingRewardsManager, fees, programId)` and goes on. For each token it forwards, it emits
@@ -80,7 +80,7 @@ holds the code, a recipient's clone is a 65-byte ERC-1167 proxy to it that ends 
 - The clones are only as safe as Aero's LeafVoter, registry and rewards managers.
 - Whoever calls `claim` chooses each entry's gas. On Base nothing on Aero's fee path catches a failure, so an entry
   given too little fails whole.
-- A token the recipient or the fee Safe can't receive fails every entry that pays it. A fee entry pays a pool's two
+- A token the recipient or the treasury can't receive fails every entry that pays it. A fee entry pays a pool's two
   tokens together.
 - A claim pays only what its entries received. Anything else a clone holds goes to its recipient, less the fee, with
   `sweep`: tokens sent to it, or a token a rewards manager paid without naming it in `token0`, `token1` or
@@ -93,20 +93,20 @@ holds the code, a recipient's clone is a 65-byte ERC-1167 proxy to it that ends 
 
 ## Deployment
 
-Not deployed. The factory needs the fee Safe on the chain: its constructor reverts with `NoCode` otherwise. On
-2026-11-13 the Safe was only on Base. The constructor only checks for code, so check the Safe's owners and threshold
-on each chain.
+Not deployed. The treasury is a Safe, fixed in the source as `TREASURY`. The factory needs it on the chain: its
+constructor reverts with `NoCode` otherwise. On 2026-11-13 the Safe was only on Base. The constructor only checks for
+code, so check the Safe's owners and threshold on each chain.
 
 The LeafVoter and the CREATE2 deployer are on all eight chains: Base (8453), OP Mainnet (10), Ethereum (1), Arbitrum
 One (42161), Ink (57073), Robinhood Chain (4663), Arc (5042) and Elysium (99901). The addresses are the same on each:
 
 | | |
 |---|---|
-| Factory | `0xdD607FA8Ceab093c2667ABce9b513B31Ebd37De4` |
-| `ImmutableClaimOperator` | `0xa90082497b868c34528ffD19BAbc63A63CFD7Ea9` |
+| Factory | `0xaDa5465C7C287FF298963600Fa70428C547960e0` |
+| `ImmutableClaimOperator` | `0xe9818949bAC95630001B4b31233FA072656Fd036` |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
-| Fee Safe | `0x450c72de8c0079B49AcedF294a13011bd09D125B` |
+| Treasury | `0x450c72de8c0079B49AcedF294a13011bd09D125B` |
 | Method | CREATE2 through `0x4e59b44847b379578588920cA78FbF26c0B4956C`, salt `keccak256("metadex.cafe/ImmutableClaimOperatorFactory/v1")` |
 
 Once:

@@ -9,6 +9,7 @@ import {IVotingEscrow} from "./interfaces/IVotingEscrow.sol";
 import {IVotingRewardsManager} from "./interfaces/IVotingRewardsManager.sol";
 
 contract ImmutableClaimOperator {
+    address public constant TREASURY = 0x450c72de8c0079B49AcedF294a13011bd09D125B;
     uint256 public constant FEE_BPS = 100;
     uint256 private constant CLONE_SIZE = 65;
     uint256 private constant RESERVED_GAS = 20_000;
@@ -19,7 +20,6 @@ contract ImmutableClaimOperator {
     address public immutable leafVoter;
     address public immutable escrow;
     uint256 public immutable baseChainId;
-    address public immutable feeRecipient;
 
     uint256 public lastClaimBlock;
     bool private transient locked;
@@ -46,12 +46,11 @@ contract ImmutableClaimOperator {
         locked = false;
     }
 
-    constructor(address leafVoter_, address escrow_, uint256 baseChainId_, address feeRecipient_) {
-        if (feeRecipient_.code.length == 0) revert NoCode(feeRecipient_);
+    constructor(address leafVoter_, address escrow_, uint256 baseChainId_) {
+        if (TREASURY.code.length == 0) revert NoCode(TREASURY);
         leafVoter = leafVoter_;
         escrow = escrow_;
         baseChainId = baseChainId_;
-        feeRecipient = feeRecipient_;
     }
 
     receive() external payable {}
@@ -164,7 +163,7 @@ contract ImmutableClaimOperator {
 
     function _pay(address account, address token, uint256 amount) private returns (uint256 fee) {
         fee = amount * FEE_BPS / 10_000;
-        if (fee != 0) _send(token, feeRecipient, fee);
+        if (fee != 0) _send(token, TREASURY, fee);
         _send(token, account, amount - fee);
     }
 

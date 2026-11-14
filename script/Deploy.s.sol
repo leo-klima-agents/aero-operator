@@ -9,13 +9,13 @@ contract Deploy is Script {
     address public constant LEAF_VOTER = 0x382409fad8503FbCdbB27A4211551fa03e884078;
     address public constant ESCROW = 0xBF7977E1521e9a3032bf7243Ee4712f311f13915;
     uint256 public constant BASE_CHAIN_ID = 8453;
-    address public constant FEE_RECIPIENT = 0x450c72de8c0079B49AcedF294a13011bd09D125B;
+    address public constant TREASURY = 0x450c72de8c0079B49AcedF294a13011bd09D125B;
 
     string public constant SALT_PREIMAGE = "metadex.cafe/ImmutableClaimOperatorFactory/v1";
     bytes32 public constant SALT = keccak256(bytes(SALT_PREIMAGE));
 
     function constructorArgs() public pure returns (bytes memory) {
-        return abi.encode(LEAF_VOTER, ESCROW, BASE_CHAIN_ID, FEE_RECIPIENT);
+        return abi.encode(LEAF_VOTER, ESCROW, BASE_CHAIN_ID);
     }
 
     function initCode() public pure returns (bytes memory) {
@@ -36,7 +36,7 @@ contract Deploy is Script {
 
     function deploy(string memory record) public returns (address deployed) {
         require(CREATE2_FACTORY.code.length != 0, "CREATE2 deployer not present");
-        require(FEE_RECIPIENT.code.length != 0, "fee Safe not present");
+        require(TREASURY.code.length != 0, "treasury not present");
         deployed = predict();
         address implementation = predictImplementation();
         console.log("ImmutableClaimOperatorFactory", deployed);

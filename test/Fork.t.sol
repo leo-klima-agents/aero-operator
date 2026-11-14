@@ -36,7 +36,7 @@ interface IVotingEscrowExtra is IVotingEscrow {
 
 abstract contract ForkTest is Test {
     uint256 internal constant ENTRY_GAS = 1_000_000;
-    bytes internal constant FEE_SAFE_STAND_IN = hex"00";
+    bytes internal constant TREASURY_STAND_IN = hex"00";
     uint256 internal constant STAKE = 621;
     bytes32 internal constant CLAIMED = ImmutableClaimOperator.Claimed.selector;
     bytes32 internal constant CLAIM_FAILED = ImmutableClaimOperator.ClaimFailed.selector;
@@ -46,7 +46,7 @@ abstract contract ForkTest is Test {
     ImmutableClaimOperatorFactory internal factory;
     ImmutableClaimOperator internal operator;
     address internal recipient;
-    address internal feeRecipient;
+    address internal treasury;
     address internal keeper = makeAddr("keeper");
 
     ILeafVoter.FeeClaim[] internal feeClaims;
@@ -69,8 +69,8 @@ abstract contract ForkTest is Test {
 
         d = new Deploy();
         leaf = ILeafVoterExtra(d.LEAF_VOTER());
-        feeRecipient = d.FEE_RECIPIENT();
-        if (feeRecipient.code.length == 0) vm.etch(feeRecipient, FEE_SAFE_STAND_IN);
+        treasury = d.TREASURY();
+        if (treasury.code.length == 0) vm.etch(treasury, TREASURY_STAND_IN);
         factory = ImmutableClaimOperatorFactory(d.run());
         recipient = _recipient();
         operator = ImmutableClaimOperator(payable(factory.operatorOf(recipient)));
@@ -175,13 +175,13 @@ abstract contract ForkTest is Test {
         uint256[] memory direct = _gained(recipient, before);
         vm.revertToState(snapshot);
 
-        uint256[] memory feesBefore = _balances(feeRecipient);
+        uint256[] memory feesBefore = _balances(treasury);
         assertEq(address(operator).code.length, 0);
         Vm.Log[] memory logs = _claim();
         assertEq(operator.recipient(), recipient);
         assertEq(operator.lastClaimBlock(), block.number);
         uint256[] memory paid = _gained(recipient, before);
-        uint256[] memory fees = _gained(feeRecipient, feesBefore);
+        uint256[] memory fees = _gained(treasury, feesBefore);
 
         assertEq(_claimed(logs, false), direct);
         assertEq(_claimed(logs, true), fees);
@@ -206,7 +206,7 @@ abstract contract ForkTest is Test {
         deal(wrappedNative, address(operator), 1 ether);
         vm.deal(address(operator), 2 ether);
         uint256[2] memory held = [IERC20(wrappedNative).balanceOf(recipient), recipient.balance];
-        uint256[2] memory feesHeld = [IERC20(wrappedNative).balanceOf(feeRecipient), feeRecipient.balance];
+        uint256[2] memory feesHeld = [IERC20(wrappedNative).balanceOf(treasury), treasury.balance];
 
         vm.startPrank(keeper);
         operator.sweep(wrappedNative);
@@ -214,9 +214,9 @@ abstract contract ForkTest is Test {
         vm.stopPrank();
 
         assertEq(IERC20(wrappedNative).balanceOf(recipient) - held[0], 0.99 ether);
-        assertEq(IERC20(wrappedNative).balanceOf(feeRecipient) - feesHeld[0], 0.01 ether);
+        assertEq(IERC20(wrappedNative).balanceOf(treasury) - feesHeld[0], 0.01 ether);
         assertEq(recipient.balance - held[1], 1.98 ether);
-        assertEq(feeRecipient.balance - feesHeld[1], 0.02 ether);
+        assertEq(treasury.balance - feesHeld[1], 0.02 ether);
         _assertNothingLeft();
     }
 
@@ -227,14 +227,14 @@ abstract contract ForkTest is Test {
         assertEq(leaf.operator(STAKE), address(0));
         bytes memory stake = _stakeState();
         uint256[] memory before = _balances(recipient);
-        uint256[] memory feesBefore = _balances(feeRecipient);
+        uint256[] memory feesBefore = _balances(treasury);
 
         Vm.Log[] memory logs = _claim();
 
         assertEq(_count(logs, CLAIM_FAILED), feeClaims.length + incentiveClaims.length);
         assertEq(_count(logs, CLAIMED), 0);
         assertEq(_balances(recipient), before);
-        assertEq(_balances(feeRecipient), feesBefore);
+        assertEq(_balances(treasury), feesBefore);
         _assertNothingLeft();
         assertEq(_stakeState(), stake);
 
@@ -354,7 +354,7 @@ contract EthereumForkTest is ForkTest {
         assertGt(_count(logs, CLAIMED), 0);
         assertGt(recipient.balance, native);
         assertEq(USDC.balanceOf(recipient), 0);
-        assertEq(USDC.balanceOf(feeRecipient), 0);
+        assertEq(USDC.balanceOf(treasury), 0);
         _assertNothingLeft();
 
         vm.prank(USDC.blacklister());
@@ -363,7 +363,7 @@ contract EthereumForkTest is ForkTest {
 
         assertEq(_count(logs, CLAIM_FAILED), 0);
         assertGt(USDC.balanceOf(recipient), 1e6);
-        assertGt(USDC.balanceOf(feeRecipient), 0);
+        assertGt(USDC.balanceOf(treasury), 0);
         _assertNothingLeft();
     }
 }
