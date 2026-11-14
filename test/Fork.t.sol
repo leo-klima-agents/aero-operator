@@ -4,11 +4,12 @@ pragma solidity 0.8.38;
 import {Test, Vm} from "forge-std/Test.sol";
 
 import {Deploy} from "../script/Deploy.s.sol";
-import {Discovery} from "../script/Discovery.sol";
+import {Discovery, ILeafVoterViews} from "../script/Discovery.sol";
 import {ImmutableClaimOperator} from "../src/ImmutableClaimOperator.sol";
 import {ImmutableClaimOperatorFactory} from "../src/ImmutableClaimOperatorFactory.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
 import {ILeafVoter} from "../src/interfaces/ILeafVoter.sol";
+import {IVotingEscrow} from "../src/interfaces/IVotingEscrow.sol";
 
 interface IVoter {
     function allocationChainAmounts(uint256 tokenId, uint256 chainId) external view returns (uint128);
@@ -17,11 +18,10 @@ interface IVoter {
         payable;
 }
 
-interface ILeafVoterExtra {
+interface ILeafVoterExtra is ILeafVoterViews {
     function ORCHESTRATOR() external view returns (address);
     function operator(uint256 tokenId) external view returns (address);
     function setOperator(uint256 tokenId, address operator) external;
-    function allocatedGauges(uint256 tokenId) external view returns (address[] memory);
     function allocations(uint256 tokenId, address gauge) external view returns (uint128);
     function tokenStates(uint256 tokenId)
         external
@@ -29,8 +29,7 @@ interface ILeafVoterExtra {
         returns (address operator, uint48 lastAllocated, bool canVoteForZeroCapGauges, uint128 chainAllocation);
 }
 
-interface IVotingEscrowExtra {
-    function ownerOf(uint256 tokenId) external view returns (address);
+interface IVotingEscrowExtra is IVotingEscrow {
     function transferFrom(address from, address to, uint256 tokenId) external;
     function staked(uint256 tokenId) external view returns (uint128 amount, uint48 end, bool isPermanent);
 }

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.38;
 
-import {Script} from "forge-std/Script.sol";
-import {console} from "forge-std/console.sol";
+import {Script, console} from "forge-std/Script.sol";
 
 import {ImmutableClaimOperatorFactory} from "../src/ImmutableClaimOperatorFactory.sol";
 

@@ -6,12 +6,9 @@ Voter on Base, `0x49d7d4f17Ec56Ef8fA04E464AF5D1A4942CC31e6`. Anyone can then cla
 the clone, which pays 1% to a fee Safe and the rest to the recipient. Setting the zero address or another operator
 ends it once the message reaches the chain.
 
-Neither contract has an owner, settings or an upgrade path:
-
-- [`ImmutableClaimOperator`](src/ImmutableClaimOperator.sol) holds the code. A recipient's clone is a 65-byte ERC-1167
-  proxy to it that ends with the recipient's address.
-- [`ImmutableClaimOperatorFactory`](src/ImmutableClaimOperatorFactory.sol) deploys the clones and gives their
-  addresses.
+Neither contract has an owner, settings or an upgrade path. [`ImmutableClaimOperator`](src/ImmutableClaimOperator.sol)
+holds the code, a recipient's clone is a 65-byte ERC-1167 proxy to it that ends with the recipient's address, and
+[`ImmutableClaimOperatorFactory`](src/ImmutableClaimOperatorFactory.sol) deploys the clones and gives their addresses.
 
 ## Behaviour
 
@@ -39,9 +36,9 @@ Neither contract has an owner, settings or an upgrade path:
 - On Base, `claim` reverts with `NotOwner` unless the recipient owns the stake. Other chains can't tell, and a stake
   keeps its operators when it changes hands.
 - `sweep(recipient, token)` on the factory deploys the clone if it has no code, then calls the clone's `sweep(token)`.
-  Anyone can call either. The clone sends its balance of the token the same way, or its native tokens for the zero
-  address, and emits `Swept(token, amount, fee)` if it sent anything. A token can be any contract, so `Swept` proves
-  a payment only for a token that is known. A sweep leaves `lastClaimBlock()` as it is.
+  The clone sends its balance of the token the same way, or its native tokens for the zero address, and emits
+  `Swept(token, amount, fee)` if it sent anything. A token can be any contract, so `Swept` proves a payment only for a
+  token that is known. A sweep leaves `lastClaimBlock()` as it is.
 - `recipient`, `claim` and `sweep` revert with `NotClone` in code that is not 65 bytes long.
 
 ## Claiming
@@ -68,10 +65,9 @@ Neither contract has an owner, settings or an upgrade path:
   | `P` | What the clone's proxy uses: `2,624 + 6w + ⌊w² / 512⌋` for `w` 32-byte words of calldata to the clone | 2,678 |
   | `U` | What the clone uses before its last entry, earlier entries included | 3,923, and 9,587 on Base |
 
-  A claim sent to the clone needs `I + P + g(U + 20,000 + g(entryGas))`. The unit tests pin these numbers but Base's,
-  and calls bisected on all eight chains matched exactly. Arbitrum One, Robinhood Chain and Elysium also charge the
-  limit for posting the transaction's data, so use `eth_estimateGas` there. It finds a limit that goes through.
-  Earlier entries can use more by the time the transaction lands, up to `entryGas` each, so add a margin.
+  Arbitrum One, Robinhood Chain and Elysium also charge the limit for posting the transaction's data, so use
+  `eth_estimateGas` there. It finds a limit that goes through. Earlier entries can use more by the time the
+  transaction lands, up to `entryGas` each, so add a margin.
 - **Cost.** An entry costs about 60,000 gas more than through Aero's Voter. Base, OP Mainnet, Ethereum, Ink and Arc
   allow a transaction 16,777,216 gas, so split long lists.
 - **Failures.** To learn why an entry fails, call the clone's
@@ -83,7 +79,7 @@ Neither contract has an owner, settings or an upgrade path:
 
 - The clones are only as safe as Aero's LeafVoter, registry and rewards managers.
 - Whoever calls `claim` chooses each entry's gas. On Base nothing on Aero's fee path catches a failure, so an entry
-  given too little fails whole. Other chains' basic-pool gauges were not checked.
+  given too little fails whole.
 - A token the recipient or the fee Safe can't receive fails every entry that pays it. A fee entry pays a pool's two
   tokens together.
 - A claim pays only what its entries received. Anything else a clone holds goes to its recipient, less the fee, with
@@ -101,20 +97,8 @@ Not deployed. The factory needs the fee Safe on the chain: its constructor rever
 2026-11-13 the Safe was only on Base. The constructor only checks for code, so check the Safe's owners and threshold
 on each chain.
 
-The LeafVoter and the CREATE2 deployer are on all eight chains:
-
-| Chain | Id | Fee Safe | Safe 1.5.0 singleton |
-|---|---|---|---|
-| Base | 8453 | yes | yes |
-| OP Mainnet | 10 | no | yes |
-| Ethereum | 1 | no | yes |
-| Arbitrum One | 42161 | no | yes |
-| Ink | 57073 | no | yes |
-| Robinhood Chain | 4663 | no | yes |
-| Arc | 5042 | no | yes |
-| Elysium | 99901 | no | no |
-
-The addresses are the same on every chain:
+The LeafVoter and the CREATE2 deployer are on all eight chains: Base (8453), OP Mainnet (10), Ethereum (1), Arbitrum
+One (42161), Ink (57073), Robinhood Chain (4663), Arc (5042) and Elysium (99901). The addresses are the same on each:
 
 | | |
 |---|---|
@@ -122,9 +106,7 @@ The addresses are the same on every chain:
 | `ImmutableClaimOperator` | `0xa90082497b868c34528ffD19BAbc63A63CFD7Ea9` |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
-| Base's chain id | 8453 |
-| Fee Safe | `0x450c72de8c0079B49AcedF294a13011bd09D125B`, a proxy to the Safe 1.5.0 singleton |
-| Fee | 1%, fixed in the source |
+| Fee Safe | `0x450c72de8c0079B49AcedF294a13011bd09D125B` |
 | Method | CREATE2 through `0x4e59b44847b379578588920cA78FbF26c0B4956C`, salt `keccak256("metadex.cafe/ImmutableClaimOperatorFactory/v1")` |
 
 Once:
@@ -170,18 +152,14 @@ cast keccak $(cast code $(jq -j .deployment.implementation $RECORD) --rpc-url $R
 jq -j .deployment.implementationRuntimeKeccak $RECORD
 ```
 
-A clone's code is `0x363d3d373d3d3d363d73`, the `ImmutableClaimOperator`'s address,
-`0x5af43d82803e903d91602b57fd5bf3` and the recipient's address.
-
 ## Development
 
 - `forge test` runs the unit tests, and the fork tests of Base and Ethereum when `BASE_RPC_URL` and
   `ETHEREUM_RPC_URL` point to archive nodes. The fork tests compare a claim through a clone with the same claim by
   Aero's own route, for a real stake.
 - `script/simulate.sh <rpc-url> <token-id> [max-gauges] [entry-gas] [entries-per-call]` makes the same comparison on
-  a live node that takes state overrides in `eth_call`, with the recorded code deployed the recorded way. It also
-  checks the clone's last claim block and the node's gas rules. It covers what a fork can't run: Base's native tokens,
-  Arc's USDC and each chain's own gas rules. It passes on all eight chains.
+  a live node that takes state overrides in `eth_call`. It covers what a fork can't run: Base's native tokens, Arc's
+  USDC and each chain's own gas and block rules.
 - `script/check-verification.sh` checks `verification/` and this file's addresses against the build, and `forge test`
   checks the runtime hashes. `script/refresh-verification.sh` regenerates `verification/`.
 
@@ -189,4 +167,4 @@ The contracts compile with solc 0.8.38 for `osaka`, which all eight chains run, 
 
 ## License
 
-MIT. `REUSE.toml` records the copyright and license of every file.
+MIT.

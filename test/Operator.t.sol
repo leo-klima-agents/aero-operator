@@ -812,7 +812,6 @@ contract OperatorTest is Test {
         assertEq(operator.recipient(), recipient);
         assertEq(usdc.balanceOf(recipient), 9.9e6);
         assertEq(usdc.balanceOf(feeRecipient), 0.1e6);
-        factory.sweep(recipient, address(usdc));
     }
 
     function test_sweep_ofAnAddressWithoutCode_reverts() public {
