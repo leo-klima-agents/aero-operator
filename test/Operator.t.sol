@@ -508,10 +508,8 @@ contract OperatorTest is Test {
     }
 
     function test_claim_pointsToBlockNumberWhereArbSysDoesNotAnswer() public {
-        vm.mockCall(address(100), abi.encodeWithSignature("arbBlockNumber()"), abi.encode(523_926_782));
         bytes[3] memory codes = [bytes(""), hex"00", hex"60006000fd"];
         for (uint256 i; i < codes.length; ++i) {
-            if (i == 1) vm.clearMockedCalls();
             vm.etch(address(100), codes[i]);
             vm.roll(200 + i);
             _owe(pair, 1e18, 0);

@@ -118,8 +118,8 @@ The addresses are the same on every chain:
 
 | | |
 |---|---|
-| Factory | `0x9A48f3E233a0068e7Bb97e1335799eC49cdaA8DB` |
-| `ImmutableClaimOperator` | `0xC902bd20AaA3d95d0F92E47E22c7bA8C42919FAF` |
+| Factory | `0xdD607FA8Ceab093c2667ABce9b513B31Ebd37De4` |
+| `ImmutableClaimOperator` | `0xa90082497b868c34528ffD19BAbc63A63CFD7Ea9` |
 | LeafVoter | `0x382409fad8503FbCdbB27A4211551fa03e884078` |
 | Escrow | `0xBF7977E1521e9a3032bf7243Ee4712f311f13915`, read on Base only |
 | Base's chain id | 8453 |

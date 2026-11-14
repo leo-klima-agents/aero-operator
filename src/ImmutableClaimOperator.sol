@@ -157,11 +157,9 @@ contract ImmutableClaimOperator {
         return token == NATIVE ? address(this).balance : IERC20(token).balanceOf(address(this));
     }
 
-    function _blockNumber() private view returns (uint256 number) {
-        number = block.number;
-        if (ARB_SYS.code.length == 0) return number;
+    function _blockNumber() private view returns (uint256) {
         (bool ok, bytes memory ret) = ARB_SYS.staticcall(abi.encodeCall(IArbSys.arbBlockNumber, ()));
-        if (ok && ret.length == 32) number = abi.decode(ret, (uint256));
+        return ok && ret.length == 32 ? abi.decode(ret, (uint256)) : block.number;
     }
 
     function _pay(address account, address token, uint256 amount) private returns (uint256 fee) {
